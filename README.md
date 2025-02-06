@@ -304,3 +304,121 @@ public class MyEntity {
         return ResponseEntity.noContent().build();
     }
 }
+
+Voici un exemple complet de comment utiliser des records avec MapStruct dans ton UserController.
+
+1. Définir l’Entity User
+
+package com.example.api.entity;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+
+@Entity
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private Long id;
+    private String email;
+    private String name;
+
+    // Constructeurs, getters et setters
+    public User() {}
+
+    public User(Long id, String email, String name) {
+        this.id = id;
+        this.email = email;
+        this.name = name;
+    }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+}
+
+2. Créer le Record UserDTO
+
+package com.example.api.dto;
+
+public record UserDTO(Long id, String email, String name) {}
+
+3. Créer le Mapper avec MapStruct
+
+Crée une interface pour le mapper. MapStruct va générer automatiquement l’implémentation.
+
+package com.example.api.mapper;
+
+import com.example.api.entity.User;
+import com.example.api.dto.UserDTO;
+import org.mapstruct.Mapper;
+import org.mapstruct.factory.Mappers;
+
+@Mapper(componentModel = "spring")
+public interface UserMapper {
+
+    UserMapper INSTANCE = Mappers.getMapper(UserMapper.class);
+
+    UserDTO toDto(User user);
+    User toEntity(UserDTO userDto);
+}
+
+	•	componentModel = "spring" permet à Spring de gérer le bean, tu peux donc l’injecter directement dans ton contrôleur.
+
+4. Mettre à jour le UserController
+
+Utilise le mapper dans ton contrôleur :
+
+package com.example.api.controller;
+
+import com.example.api.dto.UserDTO;
+import com.example.api.entity.User;
+import com.example.api.mapper.UserMapper;
+import com.example.api.repository.UserRepository;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/users")
+@Tag(name = "User Controller", description = "Operations related to users")
+public class UserController {
+
+    private final UserRepository userRepository;
+    private final UserMapper userMapper;
+
+    public UserController(UserRepository userRepository, UserMapper userMapper) {
+        this.userRepository = userRepository;
+        this.userMapper = userMapper;
+    }
+
+    @Operation(summary = "Get all users", description = "Retrieves a list of all users")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Successful retrieval")
+    })
+    @GetMapping
+    public ResponseEntity<List<UserDTO>> getAllUsers() {
+        List<UserDTO> users = userRepository.findAll().stream()
+            .map(userMapper::toDto)
+            .collect(Collectors.toList());
+        return ResponseEntity.ok(users);
+    }
+
+    @Operation(summary = "Create a new user", description = "Creates a new user")
+    @PostMapping
+    public ResponseEntity<UserDTO> createUser(@RequestBody UserDTO userDto) {
+        User user = userMapper.toEntity(userDto);
+        User savedUser
