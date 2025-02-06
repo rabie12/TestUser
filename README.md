@@ -63,10 +63,31 @@ public class UserController {
         user.setId(123L);
         return ResponseEntity.status(HttpStatus.CREATED).body(user);
     }
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import org.hibernate.annotations.GenericGenerator;
 
+import java.util.UUID;
+
+@Entity
+public class MyEntity {
+
+    @Id
+    @GeneratedValue(generator = "UUID")
+    @GenericGenerator(
+        name = "UUID",
+        strategy = "org.hibernate.id.UUIDGenerator"
+    )
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id;
+
+    // other fields, getters, setters, etc.
+}
     @Operation(summary = "Supprimer un utilisateur", description = "Supprime l'utilisateur correspondant à l'ID fourni.")
     @ApiResponses(value = {
-        @ApiResponse(responseCode = "204", description = "Utilisateur supprimé avec succès", content = @Content),
+        @ApiResponse(responseCode = "204", description = "Utilisateur supprimé avec succès", content = @Content), le
         @ApiResponse(responseCode = "404", description = "Utilisateur non trouvé", content = @Content)
     })
     @DeleteMapping("/{id}")
