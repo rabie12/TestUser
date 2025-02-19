@@ -1,24 +1,17 @@
-If you want to load LDAP configuration using @Value, you can directly inject properties from application.yml into your Spring Security configuration.
+Since roles are stored in LDAP, you need to retrieve them after authentication and log them. Here’s how you can do it:
 
-1. Define LDAP Configuration in application.yml
+✅ 1. Modify Security Configuration to Get Roles from LDAP
 
-spring:
-  ldap:
-    url: "ldap://localhost:389"
-    base: "dc=example,dc=com"
-    user-dn-pattern: "uid={0},ou=users,dc=example,dc=com"
-    group-search-base: "ou=groups,dc=example,dc=com"
-    admin-user: "cn=admin,dc=example,dc=com"
-    admin-password: "adminpassword"
+Since Spring Security LDAP uses DefaultLdapAuthoritiesPopulator to fetch roles, we will log them after authentication.
 
-2. Update SecurityConfig Using @Value
-
-Instead of using @ConfigurationProperties, use @Value to inject properties directly into SecurityConfig.java:
+Security Configuration (SecurityConfig.java)
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.ldap.authentication.LdapAuthenticationProvider;
 import org.springframework.security.ldap.authentication.PasswordComparisonAuthenticator;
 import org.springframework.security.ldap.userdetails.DefaultLdapAuthoritiesPopulator;
@@ -50,11 +43,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/admin/**").hasRole("ADMIN")
-                .requestMatchers("/user/**").hasRole("USER")
-                .anyRequest().authenticated()
-            )
+            .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
             .formLogin()
             .and()
             .logout().permitAll();
@@ -86,23 +75,56 @@ public class SecurityConfig {
     }
 }
 
-3. Explanation
-	•	@Value("${spring.ldap.url}") → Reads values from application.yml.
-	•	No need for extra configuration classes like LdapProperties.
-	•	LDAP authentication provider is configured dynamically using injected values.
+✅ 2. Log LDAP Roles After Authentication
 
-4. Testing
+Use an event listener to log user roles after a successful LDAP authentication.
 
-Start your Spring Boot application and test authentication:
+Logging Listener (AuthenticationSuccessListener.java)
 
-curl -u username:password http://localhost:8080/user/profile
+import org.springframework.context.ApplicationListener;
+import org.springframework.security.authentication.event.AuthenticationSuccessEvent;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
 
-or use the Spring Security login form.
+@Component
+public class AuthenticationSuccessListener implements ApplicationListener<AuthenticationSuccessEvent> {
 
-✅ Why This Approach?
+    @Override
+    public void onApplicationEvent(AuthenticationSuccessEvent event) {
+        Object principal = event.getAuthentication().getPrincipal();
 
-✔ Simple & Lightweight
-✔ Directly Uses @Value Without Extra Classes
-✔ Works With Environment Variables (application.yml or .properties)
+        if (principal instanceof UserDetails userDetails) {
+            System.out.println("✅ Authenticated User: " + userDetails.getUsername());
+            System.out.println("🔹 Roles from LDAP:");
+            for (GrantedAuthority authority : userDetails.getAuthorities()) {
+                System.out.println(" - " + authority.getAuthority());
+            }
+        }
+    }
+}
 
-Let me know if you need any refinements!
+✅ 3. Test Authentication & Check Logs
+
+Start Your Application & Log In
+	•	Start your Spring Boot application.
+	•	Log in via browser or Postman/cURL.
+	•	Check the console output.
+
+Example Login Request Using cURL
+
+curl -u john.doe:password http://localhost:8080
+
+Expected Console Output
+
+✅ Authenticated User: john.doe
+🔹 Roles from LDAP:
+ - ROLE_ADMIN
+ - ROLE_USER
+
+✅ Summary
+	1.	Spring Security fetches user roles from LDAP.
+	2.	Event Listener (AuthenticationSuccessListener) logs roles after authentication.
+	3.	You can check roles in the console immediately after login.
+
+Now, every time a user logs in via LDAP, their roles will be printed in the console. Let me know if you need any refinements! 🚀
