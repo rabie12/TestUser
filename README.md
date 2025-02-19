@@ -1,3 +1,20 @@
+If you want to load LDAP configuration using @Value, you can directly inject properties from application.yml into your Spring Security configuration.
+
+1. Define LDAP Configuration in application.yml
+
+spring:
+  ldap:
+    url: "ldap://localhost:389"
+    base: "dc=example,dc=com"
+    user-dn-pattern: "uid={0},ou=users,dc=example,dc=com"
+    group-search-base: "ou=groups,dc=example,dc=com"
+    admin-user: "cn=admin,dc=example,dc=com"
+    admin-password: "adminpassword"
+
+2. Update SecurityConfig Using @Value
+
+Instead of using @ConfigurationProperties, use @Value to inject properties directly into SecurityConfig.java:
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -59,4 +76,33 @@ public class SecurityConfig {
     }
 
     @Bean
-    public LdapContextSource ldapContext
+    public LdapContextSource ldapContextSource() {
+        LdapContextSource contextSource = new LdapContextSource();
+        contextSource.setUrl(ldapUrl);
+        contextSource.setBase(ldapBase);
+        contextSource.setUserDn(adminUser);
+        contextSource.setPassword(adminPassword);
+        return contextSource;
+    }
+}
+
+3. Explanation
+	•	@Value("${spring.ldap.url}") → Reads values from application.yml.
+	•	No need for extra configuration classes like LdapProperties.
+	•	LDAP authentication provider is configured dynamically using injected values.
+
+4. Testing
+
+Start your Spring Boot application and test authentication:
+
+curl -u username:password http://localhost:8080/user/profile
+
+or use the Spring Security login form.
+
+✅ Why This Approach?
+
+✔ Simple & Lightweight
+✔ Directly Uses @Value Without Extra Classes
+✔ Works With Environment Variables (application.yml or .properties)
+
+Let me know if you need any refinements!
