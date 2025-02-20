@@ -202,4 +202,4 @@ public class AuthController {
     }
 
     public record AuthRequest(String username, String password) { }
-}er, such as adding Bearer Token authentication? 🚀ents for generating a JWT token with additional claims using Java 21, Spring Boot (latest version), and JJWT 0.11.5.
+}er,"io.jsonwebtoken.lang.UnknownClassException: Unable to load class named [io.jsonwebtoken.impl.DefaultJwtBuilder] from the thread context, current, or system/application ClassLoaders.  All heuristics have been exhausted.  Class could not be found.  Have you remembered to include the jjwt-impl.jar in your runtime classpa
