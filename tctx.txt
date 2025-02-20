@@ -1,21 +1,10 @@
-D’accord ! On va corriger le problème de search avec LDAP et ajouter un hash sécurisé des mots de passe avant stockage en base de données.
-
-🛠 1. Correction de la méthode search dans LDAP
-
-Si la méthode ldapTemplate.search(...) n’est pas reconnue, assure-toi que tu as bien importé :
-
+import org.springframework.ldap.core.AttributesMapper;
 import org.springframework.ldap.core.LdapTemplate;
-import org.springframework.ldap.query.LdapQuery;
-import org.springframework.ldap.query.LdapQueryBuilder;
-
-Puis, modifie ton service LDAP comme ceci :
-
-import org.springframework.ldap.core.LdapTemplate;
-import org.springframework.ldap.core.support.LdapContextSource;
 import org.springframework.ldap.query.LdapQuery;
 import org.springframework.ldap.query.LdapQueryBuilder;
 import org.springframework.stereotype.Service;
-
+import javax.naming.NamingException;
+import javax.naming.directory.Attributes;
 import java.util.List;
 
 @Service
@@ -32,201 +21,13 @@ public class LdapService {
                 .where("cn").is(groupName)
                 .and("member").is("cn=" + username + ",ou=users,dc=example,dc=com");
 
-        List<String> result = ldapTemplate.search(query, (attributes, name) -> name.toString());
+        List<String> result = ldapTemplate.search(query, new AttributesMapper<String>() {
+            @Override
+            public String mapFromAttributes(Attributes attributes) throws NamingException {
+                return attributes.get("cn") != null ? attributes.get("cn").get().toString() : null;
+            }
+        });
+
         return !result.isEmpty();
     }
 }
-
-✅ Vérifie que ta dépendance spring-boot-starter-ldap est bien incluse dans ton pom.xml :
-
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-ldap</artifactId>
-</dependency>
-
-🔐 2. Hashage sécurisé des mots de passe
-
-🔹 Utiliser BCrypt pour hasher les mots de passe
-
-BCrypt est recommandé car il ajoute un salt automatiquement et ralentit les attaques par force brute.
-
-Ajoute cette dépendance (si elle n’est pas déjà incluse) :
-
-<dependency>
-    <groupId>org.springframework.security</groupId>
-    <artifactId>spring-security-crypto</artifactId>
-</dependency>
-
-Puis, crée un service pour gérer les mots de passe :
-
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-
-@Service
-public class PasswordService {
-    private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
-
-    public String hashPassword(String password) {
-        return passwordEncoder.encode(password);
-    }
-
-    public boolean verifyPassword(String rawPassword, String hashedPassword) {
-        return passwordEncoder.matches(rawPassword, hashedPassword);
-    }
-}
-
-✅ Explication :
-	1.	hashPassword(String password) → Prend un mot de passe en clair et le hash avec BCrypt.
-	2.	verifyPassword(String rawPassword, String hashedPassword) → Vérifie si un mot de passe correspond au hash.
-
-🗄️ 3. Stockage sécurisé en base de données
-
-Ajoute un modèle d’utilisateur avec un champ password :
-
-import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
-
-@Entity
-@Getter
-@Setter
-@Table(name = "users")
-public class User {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    private String username;
-    private String password; // Hashé avec BCrypt
-    private String role;
-}
-
-Puis, crée un repository JPA pour manipuler les utilisateurs :
-
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.Optional;
-
-public interface UserRepository extends JpaRepository<User, Long> {
-    Optional<User> findByUsername(String username);
-}
-
-🔐 4. Enregistrement d’un utilisateur avec hashage du mot de passe
-
-Crée un service pour enregistrer un nouvel utilisateur :
-
-import org.springframework.stereotype.Service;
-
-@Service
-public class UserService {
-    private final UserRepository userRepository;
-    private final PasswordService passwordService;
-
-    public UserService(UserRepository userRepository, PasswordService passwordService) {
-        this.userRepository = userRepository;
-        this.passwordService = passwordService;
-    }
-
-    public User registerUser(String username, String rawPassword, String role) {
-        User user = new User();
-        user.setUsername(username);
-        user.setPassword(passwordService.hashPassword(rawPassword)); // Hash du mot de passe
-        user.setRole(role);
-
-        return userRepository.save(user);
-    }
-}
-
-🚀 5. Endpoint pour enregistrer un utilisateur
-
-Ajoute un contrôleur pour créer un nouvel utilisateur via une requête HTTP :
-
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/users")
-public class UserController {
-    private final UserService userService;
-
-    public UserController(UserService userService) {
-        this.userService = userService;
-    }
-
-    @PostMapping("/register")
-    public String register(@RequestParam String username, @RequestParam String password, @RequestParam String role) {
-        userService.registerUser(username, password, role);
-        return "Utilisateur enregistré avec succès !";
-    }
-}
-
-✅ Test avec une requête HTTP (Postman ou Curl)
-
-curl -X POST "http://localhost:8080/users/register" \
-     -d "username=testuser&password=monmotdepasse&role=USER"
-
-🔑 6. Vérification du mot de passe lors de l’authentification
-
-Ajoute une méthode pour authentifier un utilisateur :
-
-import org.springframework.stereotype.Service;
-
-@Service
-public class AuthService {
-    private final UserRepository userRepository;
-    private final PasswordService passwordService;
-    private final JwtUtil jwtUtil;
-
-    public AuthService(UserRepository userRepository, PasswordService passwordService, JwtUtil jwtUtil) {
-        this.userRepository = userRepository;
-        this.passwordService = passwordService;
-        this.jwtUtil = jwtUtil;
-    }
-
-    public String authenticate(String username, String rawPassword) {
-        return userRepository.findByUsername(username)
-                .filter(user -> passwordService.verifyPassword(rawPassword, user.getPassword()))
-                .map(user -> jwtUtil.generateToken(username))
-                .orElseThrow(() -> new RuntimeException("Identifiants incorrects"));
-    }
-}
-
-Puis, mets à jour le contrôleur d’authentification pour accepter un mot de passe :
-
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/auth")
-public class AuthController {
-    private final AuthService authService;
-
-    public AuthController(AuthService authService) {
-        this.authService = authService;
-    }
-
-    @PostMapping("/login")
-    public String login(@RequestParam String username, @RequestParam String password) {
-        return authService.authenticate(username, password);
-    }
-}
-
-🛠 7. Sécurité supplémentaire : configuration JWT avec un secret sécurisé
-
-Ajoute ces variables dans application.properties :
-
-jwt.secret=${JWT_SECRET}
-jwt.expiration=86400000  # 1 jour en millisecondes
-
-Puis, définis une variable d’environnement dans ton système :
-
-export JWT_SECRET="uneclétrèssécurisée"
-
-✅ Résumé
-	1.	Correction de search dans LDAP pour récupérer les groupes
-	2.	Ajout d’un champ password à l’utilisateur
-	3.	Hashage sécurisé avec BCrypt avant stockage
-	4.	Vérification du mot de passe lors de l’authentification
-	5.	Génération d’un JWT après login
-
-🔥 Avec ça, tu as un système sécurisé combinant LDAP + JWT + un stockage sécurisé des mots de passe !
-
-Besoin d’ajustements ou d’explications supplémentaires ?
