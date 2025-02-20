@@ -1,32 +1,227 @@
-Here’s how to use JWT with Spring Security while checking user authentication against LDAP before generating the token.
+To implement authentication using your database and verify user group membership in LDAP before generating a JWT, while ensuring compatibility with the latest Spring Boot version and Java 21, follow the steps below:
 
-✅ 1. Add JWT Library
+1️⃣ Project Setup
 
-If you haven’t already, add JWT dependencies to your pom.xml:
+Initialize a Spring Boot Project:
+	•	Use Spring Initializr to generate a new project with the following dependencies:
+	•	Spring Web
+	•	Spring Security
+	•	Spring Data JPA
+	•	Spring LDAP
+	•	Spring Boot Starter Validation
+	•	H2 Database (or your preferred database)
+	•	jjwt (for JWT support)
 
-<dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt</artifactId>
-    <version>0.11.5</version>
-</dependency>
+Configure Java Version:
+	•	Ensure your project is set to use Java 21. In your pom.xml, specify:
 
-<dependency>
-    <groupId>org.springframework.security</groupId>
-    <artifactId>spring-security-crypto</artifactId>
-</dependency>
+<properties>
+    <java.version>21</java.version>
+</properties>
 
-🔐 2. JWT Utility Class
+2️⃣ Add Dependencies
 
-This class generates and validates JWT tokens.
+In your pom.xml, include the necessary dependencies:
 
-import io.jsonwebtoken.Claims;
+<dependencies>
+    <!-- Spring Web -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- Spring Security -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <!-- Spring Data JPA -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!-- Spring LDAP -->
+    <dependency>
+        <groupId>org.springframework.ldap</groupId>
+        <artifactId>spring-ldap-core</artifactId>
+    </dependency>
+
+    <!-- JWT Library -->
+    <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-api</artifactId>
+        <version>0.11.5</version>
+    </dependency>
+    <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-impl</artifactId>
+        <version>0.11.5</version>
+        <scope>runtime</scope>
+    </dependency>
+    <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt-jackson</artifactId>
+        <version>0.11.5</version>
+        <scope>runtime</scope>
+    </dependency>
+
+    <!-- H2 Database (or your preferred database) -->
+    <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+
+    <!-- Spring Boot Starter Validation -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+</dependencies>
+
+3️⃣ Database Authentication
+
+Entity Definition:
+
+Define a User entity representing users in your database:
+
+import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+@Entity
+@Table(name = "users")
+@Data
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @NotBlank
+    @Column(unique = true)
+    private String username;
+
+    @NotBlank
+    private String password;
+
+    // Additional fields as needed
+}
+
+Repository Interface:
+
+Create a repository interface for accessing user data:
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.Optional;
+
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByUsername(String username);
+}
+
+Password Encoding:
+
+Configure a password encoder bean:
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+@Configuration
+public class SecurityConfig {
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    // Other security configurations
+}
+
+UserDetailsService Implementation:
+
+Implement UserDetailsService to load user-specific data:
+
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+
+@Service
+public class CustomUserDetailsService implements UserDetailsService {
+
+    private final UserRepository userRepository;
+
+    public CustomUserDetailsService(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        User user = userRepository.findByUsername(username)
+            .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        return org.springframework.security.core.userdetails.User.builder()
+            .username(user.getUsername())
+            .password(user.getPassword())
+            .roles("USER") // Assign roles as needed
+            .build();
+    }
+}
+
+4️⃣ LDAP Group Verification
+
+LDAP Configuration:
+
+In your application.properties or application.yml, configure LDAP properties:
+
+spring.ldap.urls=ldap://your-ldap-server:389
+spring.ldap.base=dc=example,dc=com
+spring.ldap.username=cn=admin,dc=example,dc=com
+spring.ldap.password=adminpassword
+
+LDAP Service:
+
+Create a service to verify user group membership in LDAP:
+
+import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.query.LdapQuery;
+import org.springframework.ldap.query.LdapQueryBuilder;
+import org.springframework.stereotype.Service;
+
+@Service
+public class LdapService {
+
+    private final LdapTemplate ldapTemplate;
+
+    public LdapService(LdapTemplate ldapTemplate) {
+        this.ldapTemplate = ldapTemplate;
+    }
+
+    public boolean isUserInGroup(String username, String groupName) {
+        LdapQuery query = LdapQueryBuilder.query()
+            .base("ou=groups")
+            .where("cn").is(groupName)
+            .and("member").is("uid=" + username + ",ou=users,dc=example,dc=com");
+
+        return ldapTemplate.search(query, (attributes, name) -> name).size() > 0;
+    }
+}
+
+5️⃣ JWT Generation
+
+JWT Utility Class:
+
+Create a utility class for generating and validating JWTs:
+
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.Date;
-import java.util.function.Function;
 
 @Component
 public class JwtUtil {
@@ -39,119 +234,14 @@ public class JwtUtil {
 
     public String generateToken(String username) {
         return Jwts.builder()
-                .setSubject(username)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
-                .signWith(SignatureAlgorithm.HS256, secret)
-                .compact();
+            .setSubject(username)
+            .setIssuedAt(new Date())
+            .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
+            .signWith(SignatureAlgorithm.HS512, secret)
+            .compact();
     }
 
-    public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
-    }
-
-    public boolean validateToken(String token, String username) {
-        return (username.equals(extractUsername(token)) && !isTokenExpired(token));
-    }
-
-    private boolean isTokenExpired(String token) {
-        return extractClaim(token, Claims::getExpiration).before(new Date());
-    }
-
-    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = Jwts.parser()
-                .setSigningKey(secret)
-                .parseClaimsJws(token)
-                .getBody();
-        return claimsResolver.apply(claims);
-    }
+    // Additional methods for token validation can be added here
 }
 
-🔍 3. Check Authentication in LDAP Before Generating JWT
-
-We’ll modify the AuthService to first verify the user’s credentials in LDAP before generating a JWT token.
-
-🔹 Updated LdapService.java to Check Credentials
-
-import org.springframework.ldap.core.LdapTemplate;
-import org.springframework.ldap.query.LdapQuery;
-import org.springframework.ldap.query.LdapQueryBuilder;
-import org.springframework.stereotype.Service;
-
-@Service
-public class LdapService {
-    private final LdapTemplate ldapTemplate;
-
-    public LdapService(LdapTemplate ldapTemplate) {
-        this.ldapTemplate = ldapTemplate;
-    }
-
-    public boolean authenticateUser(String username, String password) {
-        try {
-            LdapQuery query = LdapQueryBuilder.query()
-                    .where("uid").is(username); // Adjust according to your LDAP schema
-
-            return !ldapTemplate.search(query, (attributes, name) -> name.toString()).isEmpty();
-        } catch (Exception e) {
-            return false;
-        }
-    }
-}
-
-🔹 AuthService.java - Authenticate with LDAP Before JWT
-
-import org.springframework.stereotype.Service;
-
-@Service
-public class AuthService {
-    private final LdapService ldapService;
-    private final JwtUtil jwtUtil;
-
-    public AuthService(LdapService ldapService, JwtUtil jwtUtil) {
-        this.ldapService = ldapService;
-        this.jwtUtil = jwtUtil;
-    }
-
-    public String authenticate(String username, String password) {
-        if (ldapService.authenticateUser(username, password)) {
-            return jwtUtil.generateToken(username);
-        } else {
-            throw new RuntimeException("Invalid credentials");
-        }
-    }
-}
-
-🔑 4. Authentication Controller
-
-This controller accepts login requests, checks LDAP authentication, and returns a JWT token if successful.
-
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/auth")
-public class AuthController {
-    private final AuthService authService;
-
-    public AuthController(AuthService authService) {
-        this.authService = authService;
-    }
-
-    @PostMapping("/login")
-    public String login(@RequestParam String username, @RequestParam String password) {
-        return authService.authenticate(username, password);
-    }
-}
-
-✅ Summary
-	1.	Added JWT dependencies
-	2.	Created a JWT utility class for generating and validating tokens
-	3.	Implemented LdapService to verify users in LDAP
-	4.	Modified AuthService to authenticate against LDAP before issuing a JWT
-	5.	Exposed a /auth/login endpoint to handle authentication
-
-Now, when a user logs in:
-✔ Their credentials are checked in LDAP
-✔ If valid, a JWT token is generated
-✔ The token can be used for securing API requests
-
-Let me know if you need adjustments! 🚀
+**
