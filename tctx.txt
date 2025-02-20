@@ -71,4 +71,99 @@ The code above adds the role and permission claims. You can add more claims by c
 	•	signWith Method:
 The method .signWith(getSigningKey(), SignatureAlgorithm.HS512) is the correct, non-deprecated approach in JJWT 0.11.5. If your IDE still flags it, double-check that your project uses the correct JJWT version.
 
-This implementation should now meet your requirements for generating a JWT token with additional claims using Java 21, Spring Boot (latest version), and JJWT 0.11.5.
+You can integrate OpenAPI (Swagger) into your Spring Boot application to document your authentication API and allow direct updates to the JSON request body in the Swagger UI. This is useful for testing and debugging your authentication controller.
+
+✅ Step 1: Add OpenAPI Dependencies
+
+For Spring Boot 3 (using SpringDoc):
+
+<dependency>
+    <groupId>org.springdoc</groupId>
+    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    <version>2.2.0</version>
+</dependency>
+
+For Spring Boot 2, use:
+
+<dependency>
+    <groupId>org.springdoc</groupId>
+    <artifactId>springdoc-openapi-ui</artifactId>
+    <version>1.7.0</version>
+</dependency>
+
+✅ Step 2: Configure OpenAPI
+
+Create an OpenAPI configuration class:
+
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Info;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class OpenApiConfig {
+
+    @Bean
+    public OpenAPI customOpenAPI() {
+        return new OpenAPI()
+                .info(new Info()
+                        .title("Authentication API")
+                        .version("1.0")
+                        .description("API for authentication using JWT and Spring Security"));
+    }
+}
+
+✅ Step 3: Create Authentication Controller
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.parameters.RequestBody;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/auth")
+@Tag(name = "Authentication", description = "Endpoints for user authentication")
+public class AuthController {
+
+    @Operation(summary = "Authenticate user and return JWT token",
+               description = "This endpoint authenticates the user and generates a JWT token.",
+               requestBody = @RequestBody(
+                   content = @Content(mediaType = "application/json",
+                                      schema = @Schema(implementation = AuthRequest.class))
+               ),
+               responses = {
+                   @ApiResponse(responseCode = "200", description = "Successful authentication"),
+                   @ApiResponse(responseCode = "401", description = "Unauthorized")
+               })
+    @PostMapping("/login")
+    public ResponseEntity<String> authenticateUser(@RequestBody AuthRequest request) {
+        // Dummy response (replace with real authentication logic)
+        return ResponseEntity.ok("JWT_TOKEN");
+    }
+
+    // DTO for request body
+    public static class AuthRequest {
+        public String username;
+        public String password;
+    }
+}
+
+✅ Step 4: Access Swagger UI
+	•	Run your Spring Boot application.
+	•	Open your browser and go to:
+
+http://localhost:8080/swagger-ui.html
+
+
+
+Features:
+
+✅ JSON request body can be updated dynamically in Swagger UI.
+✅ Allows you to test authentication directly from the browser.
+✅ Fully documented API for easy integration with frontend or third-party services.
+
+Would you like to customize the Swagger UI further, such as adding Bearer Token authentication? 🚀ents for generating a JWT token with additional claims using Java 21, Spring Boot (latest version), and JJWT 0.11.5.
