@@ -52,7 +52,20 @@ Make sure your jwt.secret property is a Base64-encoded string that is sufficient
 jwt.secret=YmFzZTY0RW5jb2RlZFNlY3JldEtleVRleHREYXRhMQ==
 jwt.expiration=3600000  # 1 hour in milliseconds
 
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
+import java.security.Key;
+import java.util.Base64;
 
+public class JwtKeyGenerator {
+    public static void main(String[] args) {
+        // Generate a secure random key suitable for HS512
+        Key key = Keys.secretKeyFor(SignatureAlgorithm.HS512);
+        // Encode the key in Base64 so that you can store it in your application.properties
+        String base64Key = Base64.getEncoder().encodeToString(key.getEncoded());
+        System.out.println("Secret Key (Base64 Encoded): " + base64Key);
+    }
+}
 	•	Custom Claims:
 The code above adds the role and permission claims. You can add more claims by chaining additional .claim("key", value) calls.
 	•	signWith Method:
