@@ -1,244 +1,55 @@
-For JJWT 0.12.6, here is the full implementation of JWT authentication, including token generation, validation, and secret key handling.
+package eu.olky.wallet.trading.utils;
 
-✅ 1. Add Dependencies
-
-In your pom.xml (for Spring Boot 3+):
-
-<dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-api</artifactId>
-    <version>0.12.6</version>
-</dependency>
-<dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-impl</artifactId>
-    <version>0.12.6</version>
-    <scope>runtime</scope>
-</dependency>
-<dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-jackson</artifactId>
-    <version>0.12.6</version>
-    <scope>runtime</scope>
-</dependency>
-
-For Gradle:
-
-implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
-runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
-runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
-
-✅ 2. Generate a Secure Secret Key
-
-Use HMAC-SHA algorithm (HS256) with a securely generated key.
-
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
-
-import java.security.Key;
-import java.util.Base64;
-
-public class JwtKeyGenerator {
-    public static void main(String[] args) {
-        Key key = Keys.secretKeyFor(io.jsonwebtoken.SignatureAlgorithm.HS256);
-        String encodedKey = Base64.getEncoder().encodeToString(key.getEncoded());
-        System.out.println("Generated Secret Key: " + encodedKey);
-    }
-}
-
-👉 Copy the generated key and store it in your application.properties or environment variables.
-
-✅ 3. JWT Utility Class
-
-This class generates and validates JWT tokens.
-
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.security.Keys;
+import lombok.NoArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
-import java.util.Date;
 import java.util.Base64;
-
-@Component
-public class JwtUtil {
-
-    private final Key secretKey;
-
-    public JwtUtil(@Value("${jwt.secret}") String secret) {
-        byte[] decodedKey = Base64.getDecoder().decode(secret);
-        this.secretKey = Keys.hmacShaKeyFor(decodedKey);
-    }
-
-    public String generateToken(String username, String role) {
-        return Jwts.builder()
-                .subject(username)
-                .claim("role", role)
-                .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + 3600000)) // 1 hour
-                .signWith(secretKey, Jwts.SIG.HS256)
-                .compact();
-    }
-
-    public boolean validateToken(String token) {
-        try {
-            Jwts.parser()
-                .verifyWith(secretKey)
-                .build()
-                .parseSignedClaims(token);
-            return true;
-        } catch (JwtException | IllegalArgumentException e) {
-            return false;
-        }
-    }
-
-    public String getUsernameFromToken(String token) {
-        return Jwts.parser()
-                .verifyWith(secretKey)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload()
-                .getSubject();
-    }
-
-    public String getRoleFromToken(String token) {
-        return Jwts.parser()
-                .verifyWith(secretKey)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload()
-                .get("role", String.class);
-    }
-}
-
-📌 Environment Configuration
-
-Add your Base64-encoded secret key in application.properties:
-
-jwt.secret=YOUR_GENERATED_SECRET_KEY
-
-✅ 4. Authentication Controller
-
-A simple login endpoint that returns a JWT token.
-
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/api/auth")
-public class AuthController {
-
-    private final JwtUtil jwtUtil;
-
-    public AuthController(JwtUtil jwtUtil) {
-        this.jwtUtil = jwtUtil;
-    }
-
-    @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody AuthRequest request) {
-        // Dummy authentication check (replace with real authentication)
-        if ("admin".equals(request.username()) && "password".equals(request.password())) {
-            String token = jwtUtil.generateToken(request.username(), "ROLE_ADMIN");
-            return ResponseEntity.ok(new AuthResponse(token));
-        }
-        return ResponseEntity.status(401).body("Invalid credentials");
-    }
-
-    public record AuthRequest(String username, String password) {}
-    public record AuthResponse(String token) {}
-}
-
-✅ 5. Secure API Endpoint (Example)
-
-A protected API that requires a valid JWT token.
-
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/api/secure")
-public class SecureController {
-
-    private final JwtUtil jwtUtil;
-
-    public SecureController(JwtUtil jwtUtil) {
-        this.jwtUtil = jwtUtil;
-    }
-
-    @GetMapping("/user-info")
-    public ResponseEntity<?> getUserInfo(@RequestHeader("Authorization") String token) {
-        token = token.replace("Bearer ", "");
-        if (!jwtUtil.validateToken(token)) {
-            return ResponseEntity.status(401).body("Invalid Token");
-        }
-        String username = jwtUtil.getUsernameFromToken(token);
-        String role = jwtUtil.getRoleFromToken(token);
-        return ResponseEntity.ok("User: " + username + ", Role: " + role);
-    }
-}
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.MacAlgorithm;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-
-import java.security.Key;
 import java.util.Date;
 import java.util.List;
-import java.nio.charset.StandardCharsets;
 
-public class JwtUtil {
-    private static final MacAlgorithm ALGORITHM = Jwts.SIG.HS256;
+import static javax.crypto.Cipher.SECRET_KEY;
 
-    // Clé secrète (doit être stockée en variable d'environnement)
-    private static final String SECRET_KEY = "bK2Yr7XtJ9nH0dM8qL1Gv5PzB3Q4WcD6aTzEoVfRgU9xKyNpJmFsA1ChMoX8YwZd";
-    
-    // Utilisation correcte de la clé (encodée en UTF-8 au lieu de Base64)
-    private static final Key key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes(StandardCharsets.UTF_8));
+@Component
+@NoArgsConstructor
+public class JwtUtils {
 
-    // Expiration : 1 heure
-    private static final long EXPIRATION_TIME = 3600000;
+    @Value("${jwt.expiration}")
+    private long expiration;
+    @Value("${jwt.secret}")
+    private static String SECRET_KEY = "bK2Yr7XtJ9nH0dM8qL1Gv5PzB3Q4WcD6aTzEoVfRgU9xKyNpJmFsA1ChMoX8YwZd";
+    private static Key key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes(StandardCharsets.UTF_8));
 
-    public static String generateToken(String username, List<String> roles) {
+
+
+    public String generateToken(String username, String roles) {
         return Jwts.builder()
                 .subject(username)
-                .claim("roles", roles) // Ajout des rôles dans le JWT
+                .claim("roles", "OLKY")
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .signWith(key, ALGORITHM)
+                .expiration(new Date(System.currentTimeMillis() + this.expiration))
+                .signWith(key)
                 .compact();
     }
 
-    public static boolean validateToken(String token) {
+   public static boolean validateToken(String token) {
         try {
             Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token);
+                    .verifyWith((SecretKey) key)
+                    .build()
+                    .parseSignedClaims(token);
             return true;
         } catch (JwtException e) {
-            System.err.println("Invalid JWT: " + e.getMessage()); // Log d'erreur
+            System.err.println("Invalid JWT: " + e.getMessage());
             return false;
         }
     }
 
-    public static String extractUsername(String token) {
-        Claims claims = Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-        return claims.getSubject();
-    }
-
-    public static List<String> extractRoles(String token) {
-        Claims claims = Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-        return claims.get("roles", List.class);
-    }
 }
