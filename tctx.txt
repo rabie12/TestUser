@@ -177,21 +177,4 @@ public class SecureController {
         return ResponseEntity.ok("User: " + username + ", Role: " + role);
     }
 }
-
-✅ 6. Test Your API
-
-1️⃣ Generate a Token
-
-curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d '{"username": "admin", "password": "password"}'
-
-2️⃣ Use the Token to Access a Protected API
-
-curl -X GET http://localhost:8080/api/secure/user-info -H "Authorization: Bearer YOUR_JWT_TOKEN"
-
-🚀 Final Notes
-	•	Uses JJWT 0.12.6 (signWith() and verifyWith() methods).
-	•	Stores the secret key securely using application.properties.
-	•	Includes user roles inside the token.
-	•	Validates the token before accessing secure endpoints.
-
-Would you like to add Spring Security for automatic JWT validation? 🚀
+The specified key byte array is 128 bits which is not secure enough for any JWT HMAC-SHA algorithm.  The JWT JWA Specification (RFC 7518, Section 3.2) states that keys used with HMAC-SHA algorithms MUST have a size >= 256 bits (the key size must be greater than or equal to the hash output size).  Consider using the Jwts.SIG.HS256.key() builder (or HS384.key() or HS512.key()) to create a key guaranteed to be secure enough for your preferred HMAC-SHA algorithm.
