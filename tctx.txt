@@ -1,68 +1,17 @@
-OK, voici une implémentation complète de l’authentification avec Spring Security + JWT, tout en vérifiant les rôles via LDAP. Cette solution :
+D’accord ! On va corriger le problème de search avec LDAP et ajouter un hash sécurisé des mots de passe avant stockage en base de données.
 
-✅ Utilise LDAP pour vérifier si un utilisateur appartient à un groupe
-✅ Gère l’authentification avec JWT côté Spring Boot
-✅ Ne nécessite pas d’interface graphique
+🛠 1. Correction de la méthode search dans LDAP
 
-📌 1. Ajouter les dépendances Spring Boot
-
-Ajoute ces dépendances dans ton pom.xml :
-
-<dependencies>
-    <!-- Spring Security -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-security</artifactId>
-    </dependency>
-
-    <!-- Spring Boot Web -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-
-    <!-- Spring LDAP -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-ldap</artifactId>
-    </dependency>
-
-    <!-- JSON Web Token (JWT) -->
-    <dependency>
-        <groupId>io.jsonwebtoken</groupId>
-        <artifactId>jjwt</artifactId>
-        <version>0.11.5</version>
-    </dependency>
-
-    <!-- Spring Boot Validation -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-validation</artifactId>
-    </dependency>
-
-    <!-- Lombok (facultatif, pour réduire le boilerplate) -->
-    <dependency>
-        <groupId>org.projectlombok</groupId>
-        <artifactId>lombok</artifactId>
-        <scope>provided</scope>
-    </dependency>
-</dependencies>
-
-📌 2. Configuration de LDAP dans application.properties
-
-spring.ldap.urls=ldap://localhost:389
-spring.ldap.base=dc=example,dc=com
-spring.ldap.username=cn=admin,dc=example,dc=com
-spring.ldap.password=adminpassword
-
-🔹 Explication :
-	•	spring.ldap.urls → Adresse de ton serveur LDAP
-	•	spring.ldap.base → Base DN de ton annuaire
-	•	spring.ldap.username / spring.ldap.password → Credentials pour se connecter à LDAP
-
-📌 3. Service LDAP pour vérifier les rôles des utilisateurs
+Si la méthode ldapTemplate.search(...) n’est pas reconnue, assure-toi que tu as bien importé :
 
 import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.query.LdapQuery;
+import org.springframework.ldap.query.LdapQueryBuilder;
+
+Puis, modifie ton service LDAP comme ceci :
+
+import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.core.support.LdapContextSource;
 import org.springframework.ldap.query.LdapQuery;
 import org.springframework.ldap.query.LdapQueryBuilder;
 import org.springframework.stereotype.Service;
@@ -88,167 +37,196 @@ public class LdapService {
     }
 }
 
-🔹 Ce service vérifie si un utilisateur appartient à un groupe LDAP.
+✅ Vérifie que ta dépendance spring-boot-starter-ldap est bien incluse dans ton pom.xml :
 
-📌 4. Génération et validation des tokens JWT
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-ldap</artifactId>
+</dependency>
 
-🔹 Classe utilitaire JwtUtil.java
+🔐 2. Hashage sécurisé des mots de passe
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+🔹 Utiliser BCrypt pour hasher les mots de passe
 
-import java.util.Date;
-import java.util.function.Function;
+BCrypt est recommandé car il ajoute un salt automatiquement et ralentit les attaques par force brute.
 
-@Component
-public class JwtUtil {
+Ajoute cette dépendance (si elle n’est pas déjà incluse) :
 
-    @Value("${jwt.secret}")
-    private String secret;
+<dependency>
+    <groupId>org.springframework.security</groupId>
+    <artifactId>spring-security-crypto</artifactId>
+</dependency>
 
-    @Value("${jwt.expiration}")
-    private long expirationMs;
+Puis, crée un service pour gérer les mots de passe :
 
-    public String generateToken(String username) {
-        return Jwts.builder()
-                .setSubject(username)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
-                .signWith(SignatureAlgorithm.HS256, secret)
-                .compact();
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+@Service
+public class PasswordService {
+    private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+
+    public String hashPassword(String password) {
+        return passwordEncoder.encode(password);
     }
 
-    public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
-    }
-
-    public boolean validateToken(String token, String username) {
-        return (username.equals(extractUsername(token)) && !isTokenExpired(token));
-    }
-
-    private boolean isTokenExpired(String token) {
-        return extractClaim(token, Claims::getExpiration).before(new Date());
-    }
-
-    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = Jwts.parser()
-                .setSigningKey(secret)
-                .parseClaimsJws(token)
-                .getBody();
-        return claimsResolver.apply(claims);
+    public boolean verifyPassword(String rawPassword, String hashedPassword) {
+        return passwordEncoder.matches(rawPassword, hashedPassword);
     }
 }
 
-🔹 Ce code gère la génération et la validation des JWT.
+✅ Explication :
+	1.	hashPassword(String password) → Prend un mot de passe en clair et le hash avec BCrypt.
+	2.	verifyPassword(String rawPassword, String hashedPassword) → Vérifie si un mot de passe correspond au hash.
 
-📌 5. Filtre JWT pour intercepter les requêtes
+🗄️ 3. Stockage sécurisé en base de données
 
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.ServletRequest;
-import jakarta.servlet.ServletResponse;
-import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.stereotype.Component;
-import org.springframework.web.filter.GenericFilterBean;
+Ajoute un modèle d’utilisateur avec un champ password :
 
-import java.io.IOException;
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
-@Component
-public class JwtFilter extends GenericFilterBean {
+@Entity
+@Getter
+@Setter
+@Table(name = "users")
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
+    private String username;
+    private String password; // Hashé avec BCrypt
+    private String role;
+}
+
+Puis, crée un repository JPA pour manipuler les utilisateurs :
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.Optional;
+
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByUsername(String username);
+}
+
+🔐 4. Enregistrement d’un utilisateur avec hashage du mot de passe
+
+Crée un service pour enregistrer un nouvel utilisateur :
+
+import org.springframework.stereotype.Service;
+
+@Service
+public class UserService {
+    private final UserRepository userRepository;
+    private final PasswordService passwordService;
+
+    public UserService(UserRepository userRepository, PasswordService passwordService) {
+        this.userRepository = userRepository;
+        this.passwordService = passwordService;
+    }
+
+    public User registerUser(String username, String rawPassword, String role) {
+        User user = new User();
+        user.setUsername(username);
+        user.setPassword(passwordService.hashPassword(rawPassword)); // Hash du mot de passe
+        user.setRole(role);
+
+        return userRepository.save(user);
+    }
+}
+
+🚀 5. Endpoint pour enregistrer un utilisateur
+
+Ajoute un contrôleur pour créer un nouvel utilisateur via une requête HTTP :
+
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/users")
+public class UserController {
+    private final UserService userService;
+
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
+
+    @PostMapping("/register")
+    public String register(@RequestParam String username, @RequestParam String password, @RequestParam String role) {
+        userService.registerUser(username, password, role);
+        return "Utilisateur enregistré avec succès !";
+    }
+}
+
+✅ Test avec une requête HTTP (Postman ou Curl)
+
+curl -X POST "http://localhost:8080/users/register" \
+     -d "username=testuser&password=monmotdepasse&role=USER"
+
+🔑 6. Vérification du mot de passe lors de l’authentification
+
+Ajoute une méthode pour authentifier un utilisateur :
+
+import org.springframework.stereotype.Service;
+
+@Service
+public class AuthService {
+    private final UserRepository userRepository;
+    private final PasswordService passwordService;
     private final JwtUtil jwtUtil;
 
-    public JwtFilter(JwtUtil jwtUtil) {
+    public AuthService(UserRepository userRepository, PasswordService passwordService, JwtUtil jwtUtil) {
+        this.userRepository = userRepository;
+        this.passwordService = passwordService;
         this.jwtUtil = jwtUtil;
     }
 
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
-        HttpServletRequest httpRequest = (HttpServletRequest) request;
-        String authorizationHeader = httpRequest.getHeader("Authorization");
-
-        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
-            String token = authorizationHeader.substring(7);
-            String username = jwtUtil.extractUsername(token);
-
-            if (username != null && jwtUtil.validateToken(token, username)) {
-                SecurityContextHolder.getContext().setAuthentication(
-                        new UsernamePasswordAuthenticationToken(username, null, List.of())
-                );
-            }
-        }
-        chain.doFilter(request, response);
+    public String authenticate(String username, String rawPassword) {
+        return userRepository.findByUsername(username)
+                .filter(user -> passwordService.verifyPassword(rawPassword, user.getPassword()))
+                .map(user -> jwtUtil.generateToken(username))
+                .orElseThrow(() -> new RuntimeException("Identifiants incorrects"));
     }
 }
 
-📌 6. Configuration de Spring Security
-
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-
-@Configuration
-@EnableWebSecurity
-public class SecurityConfig {
-
-    private final JwtFilter jwtFilter;
-
-    public SecurityConfig(JwtFilter jwtFilter) {
-        this.jwtFilter = jwtFilter;
-    }
-
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http.csrf().disable()
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/login").permitAll()
-                .requestMatchers("/admin/**").hasRole("ADMIN")
-                .anyRequest().authenticated()
-            )
-            .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
-
-        return http.build();
-    }
-}
-
-📌 7. Contrôleur d’authentification
+Puis, mets à jour le contrôleur d’authentification pour accepter un mot de passe :
 
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
+    private final AuthService authService;
 
-    private final LdapService ldapService;
-    private final JwtUtil jwtUtil;
-
-    public AuthController(LdapService ldapService, JwtUtil jwtUtil) {
-        this.ldapService = ldapService;
-        this.jwtUtil = jwtUtil;
+    public AuthController(AuthService authService) {
+        this.authService = authService;
     }
 
     @PostMapping("/login")
-    public String login(@RequestParam String username) {
-        if (ldapService.isUserInGroup(username, "admin")) {
-            return jwtUtil.generateToken(username);
-        }
-        return "Accès refusé";
+    public String login(@RequestParam String username, @RequestParam String password) {
+        return authService.authenticate(username, password);
     }
 }
 
-🚀 Conclusion
-	1.	LDAP vérifie si l’utilisateur appartient à un groupe
-	2.	Si oui, un JWT est généré
-	3.	Les requêtes utilisent le JWT pour s’authentifier
+🛠 7. Sécurité supplémentaire : configuration JWT avec un secret sécurisé
 
-Besoin d’ajustements ?
+Ajoute ces variables dans application.properties :
+
+jwt.secret=${JWT_SECRET}
+jwt.expiration=86400000  # 1 jour en millisecondes
+
+Puis, définis une variable d’environnement dans ton système :
+
+export JWT_SECRET="uneclétrèssécurisée"
+
+✅ Résumé
+	1.	Correction de search dans LDAP pour récupérer les groupes
+	2.	Ajout d’un champ password à l’utilisateur
+	3.	Hashage sécurisé avec BCrypt avant stockage
+	4.	Vérification du mot de passe lors de l’authentification
+	5.	Génération d’un JWT après login
+
+🔥 Avec ça, tu as un système sécurisé combinant LDAP + JWT + un stockage sécurisé des mots de passe !
+
+Besoin d’ajustements ou d’explications supplémentaires ?
