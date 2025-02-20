@@ -1,238 +1,6 @@
-To implement authentication using your database and verify user group membership in LDAP before generating a JWT, while ensuring compatibility with the latest Spring Boot version and Java 21, follow the steps below:
-
-1️⃣ Project Setup
-
-Initialize a Spring Boot Project:
-	•	Use Spring Initializr to generate a new project with the following dependencies:
-	•	Spring Web
-	•	Spring Security
-	•	Spring Data JPA
-	•	Spring LDAP
-	•	Spring Boot Starter Validation
-	•	H2 Database (or your preferred database)
-	•	jjwt (for JWT support)
-
-Configure Java Version:
-	•	Ensure your project is set to use Java 21. In your pom.xml, specify:
-
-<properties>
-    <java.version>21</java.version>
-</properties>
-
-2️⃣ Add Dependencies
-
-In your pom.xml, include the necessary dependencies:
-
-<dependencies>
-    <!-- Spring Web -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-
-    <!-- Spring Security -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-security</artifactId>
-    </dependency>
-
-    <!-- Spring Data JPA -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-data-jpa</artifactId>
-    </dependency>
-
-    <!-- Spring LDAP -->
-    <dependency>
-        <groupId>org.springframework.ldap</groupId>
-        <artifactId>spring-ldap-core</artifactId>
-    </dependency>
-
-    <!-- JWT Library -->
-    <dependency>
-        <groupId>io.jsonwebtoken</groupId>
-        <artifactId>jjwt-api</artifactId>
-        <version>0.11.5</version>
-    </dependency>
-    <dependency>
-        <groupId>io.jsonwebtoken</groupId>
-        <artifactId>jjwt-impl</artifactId>
-        <version>0.11.5</version>
-        <scope>runtime</scope>
-    </dependency>
-    <dependency>
-        <groupId>io.jsonwebtoken</groupId>
-        <artifactId>jjwt-jackson</artifactId>
-        <version>0.11.5</version>
-        <scope>runtime</scope>
-    </dependency>
-
-    <!-- H2 Database (or your preferred database) -->
-    <dependency>
-        <groupId>com.h2database</groupId>
-        <artifactId>h2</artifactId>
-        <scope>runtime</scope>
-    </dependency>
-
-    <!-- Spring Boot Starter Validation -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-validation</artifactId>
-    </dependency>
-</dependencies>
-
-3️⃣ Database Authentication
-
-Entity Definition:
-
-Define a User entity representing users in your database:
-
-import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import lombok.Data;
-
-@Entity
-@Table(name = "users")
-@Data
-public class User {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @NotBlank
-    @Column(unique = true)
-    private String username;
-
-    @NotBlank
-    private String password;
-
-    // Additional fields as needed
-}
-
-Repository Interface:
-
-Create a repository interface for accessing user data:
-
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.Optional;
-
-public interface UserRepository extends JpaRepository<User, Long> {
-    Optional<User> findByUsername(String username);
-}
-
-Password Encoding:
-
-Configure a password encoder bean:
-
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-
-@Configuration
-public class SecurityConfig {
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
-    // Other security configurations
-}
-
-UserDetailsService Implementation:
-
-Implement UserDetailsService to load user-specific data:
-
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
-import org.springframework.stereotype.Service;
-
-@Service
-public class CustomUserDetailsService implements UserDetailsService {
-
-    private final UserRepository userRepository;
-
-    public CustomUserDetailsService(UserRepository userRepository) {
-        this.userRepository = userRepository;
-    }
-
-    @Override
-    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        User user = userRepository.findByUsername(username)
-            .orElseThrow(() -> new UsernameNotFoundException("User not found"));
-
-        return org.springframework.security.core.userdetails.User.builder()
-            .username(user.getUsername())
-            .password(user.getPassword())
-            .roles("USER") // Assign roles as needed
-            .build();
-    }
-}
-
-4️⃣ LDAP Group Verification
-
-LDAP Configuration:
-
-In your application.properties or application.yml, configure LDAP properties:
-
-spring.ldap.urls=ldap://your-ldap-server:389
-spring.ldap.base=dc=example,dc=com
-spring.ldap.username=cn=admin,dc=example,dc=com
-spring.ldap.password=adminpassword
-
-LDAP Service:
-
-Create a service to verify user group membership in LDAP:
-
-import org.springframework.ldap.core.LdapTemplate;
-import org.springframework.ldap.query.LdapQuery;
-import org.springframework.ldap.query.LdapQueryBuilder;
-import org.springframework.stereotype.Service;
-
-@Service
-public class LdapService {
-
-    private final LdapTemplate ldapTemplate;
-
-    public LdapService(LdapTemplate ldapTemplate) {
-        this.ldapTemplate = ldapTemplate;
-    }
-
-    public boolean isUserInGroup(String username, String groupName) {
-        LdapQuery query = LdapQueryBuilder.query()
-            .base("ou=groups")
-            .where("cn").is(groupName)
-            .and("member").is("uid=" + username + ",ou=users,dc=example,dc=com");
-
-        return ldapTemplate.search(query, (attributes, name) -> name).size() > 0;
-    }
-}
-
-5️⃣ JWT Generation
-
-JWT Utility Class:
-
-Create a utility class for generating and validating JWTs:
+Below is an updated version of the JWT utility class that adds custom claims (such as role and permission) to the token while using the non‐deprecated signWith method from JJWT 0.11.5. If you still see deprecation warnings, please ensure you’re using the correct version of the library.
 
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
-import java.util.Date;
-
-@Component
-public class JwtUtil {
-
-    @Value("${jwt.secret}")
-    private String secret;
-
-    @Value("${jwt.expiration}")
-    private long expirationMs;
-
-    import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
@@ -251,23 +19,43 @@ public class JwtUtil {
     @Value("${jwt.expiration}")
     private long expirationMs;
 
-    // Decode the Base64-encoded secret and generate a Key.
+    // Decode the Base64-encoded secret and create a secure signing key.
     private Key getSigningKey() {
         byte[] keyBytes = Decoders.BASE64.decode(secret);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
-    public String generateToken(String username) {
+    /**
+     * Generates a JWT token with additional claims for role and permission.
+     *
+     * @param username   the username (subject)
+     * @param role       the user's role
+     * @param permission the user's permission(s) (can be a single permission or a comma-separated string, etc.)
+     * @return a signed JWT token
+     */
+    public String generateToken(String username, String role, String permission) {
         return Jwts.builder()
-            .subject(username)
-            .issuedAt(new Date())
-            .expiration(new Date(System.currentTimeMillis() + expirationMs))
-            .signWith(getSigningKey(), SignatureAlgorithm.HS512) // Specify the algorithm explicitly
-            .compact();
+                .setSubject(username)
+                .claim("role", role)
+                .claim("permission", permission)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
+                .signWith(getSigningKey(), SignatureAlgorithm.HS512) // non-deprecated usage
+                .compact();
     }
 }
 
-    // Additional methods for token validation can be added here
-}
+Notes
+	•	Secret Key:
+Make sure your jwt.secret property is a Base64-encoded string that is sufficiently long (at least 32 bytes for HS512). For example:
 
-**
+jwt.secret=YmFzZTY0RW5jb2RlZFNlY3JldEtleVRleHREYXRhMQ==
+jwt.expiration=3600000  # 1 hour in milliseconds
+
+
+	•	Custom Claims:
+The code above adds the role and permission claims. You can add more claims by chaining additional .claim("key", value) calls.
+	•	signWith Method:
+The method .signWith(getSigningKey(), SignatureAlgorithm.HS512) is the correct, non-deprecated approach in JJWT 0.11.5. If your IDE still flags it, double-check that your project uses the correct JJWT version.
+
+This implementation should now meet your requirements for generating a JWT token with additional claims using Java 21, Spring Boot (latest version), and JJWT 0.11.5.
