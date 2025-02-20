@@ -177,5 +177,68 @@ public class SecureController {
         return ResponseEntity.ok("User: " + username + ", Role: " + role);
     }
 }
-Cannot resolve method 'signWith(Key, MacAlgorithm)'
-The specified key byte array is 128 bits which is not secure enough for any JWT HMAC-SHA algorithm.  The JWT JWA Specification (RFC 7518, Section 3.2) states that keys used with HMAC-SHA algorithms MUST have a size >= 256 bits (the key size must be greater than or equal to the hash output size).  Consider using the Jwts.SIG.HS256.key() builder (or HS384.key() or HS512.key()) to create a key guaranteed to be secure enough for your preferred HMAC-SHA algorithm.
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.MacAlgorithm;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+
+import java.security.Key;
+import java.util.Date;
+import java.util.List;
+import java.nio.charset.StandardCharsets;
+
+public class JwtUtil {
+    private static final MacAlgorithm ALGORITHM = Jwts.SIG.HS256;
+
+    // Clé secrète (doit être stockée en variable d'environnement)
+    private static final String SECRET_KEY = "bK2Yr7XtJ9nH0dM8qL1Gv5PzB3Q4WcD6aTzEoVfRgU9xKyNpJmFsA1ChMoX8YwZd";
+    
+    // Utilisation correcte de la clé (encodée en UTF-8 au lieu de Base64)
+    private static final Key key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes(StandardCharsets.UTF_8));
+
+    // Expiration : 1 heure
+    private static final long EXPIRATION_TIME = 3600000;
+
+    public static String generateToken(String username, List<String> roles) {
+        return Jwts.builder()
+                .subject(username)
+                .claim("roles", roles) // Ajout des rôles dans le JWT
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .signWith(key, ALGORITHM)
+                .compact();
+    }
+
+    public static boolean validateToken(String token) {
+        try {
+            Jwts.parser()
+                .verifyWith(key)
+                .build()
+                .parseSignedClaims(token);
+            return true;
+        } catch (JwtException e) {
+            System.err.println("Invalid JWT: " + e.getMessage()); // Log d'erreur
+            return false;
+        }
+    }
+
+    public static String extractUsername(String token) {
+        Claims claims = Jwts.parser()
+                .verifyWith(key)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+        return claims.getSubject();
+    }
+
+    public static List<String> extractRoles(String token) {
+        Claims claims = Jwts.parser()
+                .verifyWith(key)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+        return claims.get("roles", List.class);
+    }
+}
