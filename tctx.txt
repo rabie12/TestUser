@@ -1,220 +1,197 @@
-Below is an updated version of the JWT utility class that adds custom claims (such as role and permission) to the token while using the non‐deprecated signWith method from JJWT 0.11.5. If you still see deprecation warnings, please ensure you’re using the correct version of the library.
+For JJWT 0.12.6, here is the full implementation of JWT authentication, including token generation, validation, and secret key handling.
+
+✅ 1. Add Dependencies
+
+In your pom.xml (for Spring Boot 3+):
+
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-api</artifactId>
+    <version>0.12.6</version>
+</dependency>
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-impl</artifactId>
+    <version>0.12.6</version>
+    <scope>runtime</scope>
+</dependency>
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-jackson</artifactId>
+    <version>0.12.6</version>
+    <scope>runtime</scope>
+</dependency>
+
+For Gradle:
+
+implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
+runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+✅ 2. Generate a Secure Secret Key
+
+Use HMAC-SHA algorithm (HS256) with a securely generated key.
 
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
+
+import java.security.Key;
+import java.util.Base64;
+
+public class JwtKeyGenerator {
+    public static void main(String[] args) {
+        Key key = Keys.secretKeyFor(io.jsonwebtoken.SignatureAlgorithm.HS256);
+        String encodedKey = Base64.getEncoder().encodeToString(key.getEncoded());
+        System.out.println("Generated Secret Key: " + encodedKey);
+    }
+}
+
+👉 Copy the generated key and store it in your application.properties or environment variables.
+
+✅ 3. JWT Utility Class
+
+This class generates and validates JWT tokens.
+
+import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.security.Key;
 import java.util.Date;
+import java.util.Base64;
 
 @Component
 public class JwtUtil {
 
-    @Value("${jwt.secret}")
-    private String secret;
+    private final Key secretKey;
 
-    @Value("${jwt.expiration}")
-    private long expirationMs;
-
-    // Decode the Base64-encoded secret and create a secure signing key.
-    private Key getSigningKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(secret);
-        return Keys.hmacShaKeyFor(keyBytes);
+    public JwtUtil(@Value("${jwt.secret}") String secret) {
+        byte[] decodedKey = Base64.getDecoder().decode(secret);
+        this.secretKey = Keys.hmacShaKeyFor(decodedKey);
     }
 
-    /**
-     * Generates a JWT token with additional claims for role and permission.
-     *
-     * @param username   the username (subject)
-     * @param role       the user's role
-     * @param permission the user's permission(s) (can be a single permission or a comma-separated string, etc.)
-     * @return a signed JWT token
-     */
-    public String generateToken(String username, String role, String permission) {
+    public String generateToken(String username, String role) {
         return Jwts.builder()
-                .setSubject(username)
+                .subject(username)
                 .claim("role", role)
-                .claim("permission", permission)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
-                .signWith(getSigningKey(), SignatureAlgorithm.HS512) // non-deprecated usage
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 3600000)) // 1 hour
+                .signWith(secretKey, Jwts.SIG.HS256)
                 .compact();
     }
-}
 
-Notes
-	•	Secret Key:
-Make sure your jwt.secret property is a Base64-encoded string that is sufficiently long (at least 32 bytes for HS512). For example:
-
-jwt.secret=YmFzZTY0RW5jb2RlZFNlY3JldEtleVRleHREYXRhMQ==
-jwt.expiration=3600000  # 1 hour in milliseconds
-
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.security.Keys;
-import java.security.Key;
-import java.util.Base64;
-
-public class JwtKeyGenerator {
-    public static void main(String[] args) {
-        // Generate a secure random key suitable for HS512
-        Key key = Keys.secretKeyFor(SignatureAlgorithm.HS512);
-        // Encode the key in Base64 so that you can store it in your application.properties
-        String base64Key = Base64.getEncoder().encodeToString(key.getEncoded());
-        System.out.println("Secret Key (Base64 Encoded): " + base64Key);
-    }
-}
-	•	Custom Claims:
-The code above adds the role and permission claims. You can add more claims by chaining additional .claim("key", value) calls.
-	•	signWith Method:
-The method .signWith(getSigningKey(), SignatureAlgorithm.HS512) is the correct, non-deprecated approach in JJWT 0.11.5. If your IDE still flags it, double-check that your project uses the correct JJWT version.
-
-You can integrate OpenAPI (Swagger) into your Spring Boot application to document your authentication API and allow direct updates to the JSON request body in the Swagger UI. This is useful for testing and debugging your authentication controller.
-
-✅ Step 1: Add OpenAPI Dependencies
-
-For Spring Boot 3 (using SpringDoc):
-
-<dependency>
-    <groupId>org.springdoc</groupId>
-    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-    <version>2.2.0</version>
-</dependency>
-
-For Spring Boot 2, use:
-
-<dependency>
-    <groupId>org.springdoc</groupId>
-    <artifactId>springdoc-openapi-ui</artifactId>
-    <version>1.7.0</version>
-</dependency>
-
-✅ Step 2: Configure OpenAPI
-
-Create an OpenAPI configuration class:
-
-import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.info.Info;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-@Configuration
-public class OpenApiConfig {
-
-    @Bean
-    public OpenAPI customOpenAPI() {
-        return new OpenAPI()
-                .info(new Info()
-                        .title("Authentication API")
-                        .version("1.0")
-                        .description("API for authentication using JWT and Spring Security"));
-    }
-}
-
-✅ Step 3: Create Authentication Controller
-
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.parameters.RequestBody;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/api/auth")
-@Tag(name = "Authentication", description = "Endpoints for user authentication")
-public class AuthController {
-
-    @Operation(summary = "Authenticate user and return JWT token",
-               description = "This endpoint authenticates the user and generates a JWT token.",
-               requestBody = @RequestBody(
-                   content = @Content(mediaType = "application/json",
-                                      schema = @Schema(implementation = AuthRequest.class))
-               ),
-               responses = {
-                   @ApiResponse(responseCode = "200", description = "Successful authentication"),
-                   @ApiResponse(responseCode = "401", description = "Unauthorized")
-               })
-    @PostMapping("/login")
-    public ResponseEntity<String> authenticateUser(@RequestBody AuthRequest request) {
-        // Dummy response (replace with real authentication logic)
-        return ResponseEntity.ok("JWT_TOKEN");
-    }
-
-    // DTO for request body
-    public static class AuthRequest {
-        public String username;
-        public String password;
-    }
-}
-
-✅ Step 4: Access Swagger UI
-	•	Run your Spring Boot application.
-	•	Open your browser and go to:
-
-http://localhost:8080/swagger-ui.html
-
-
-
-Features:
-
-✅ JSON request body can be updated dynamically in Swagger UI.
-✅ Allows you to test authentication directly from the browser.
-✅ Fully documented API for easy integration with frontend or third-party services.
-
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.parameters.RequestBody;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/api/auth")
-@Tag(name = "Authentication", description = "Endpoints for user authentication")
-public class AuthController {
-
-    @Operation(
-        summary = "Authenticate user",
-        description = "Authenticates a user and returns a JWT token.",
-        requestBody = @RequestBody(
-            description = "User login credentials",
-            required = true,
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(implementation = AuthRequest.class)
-            )
-        ),
-        responses = {
-            @ApiResponse(responseCode = "200", description = "Successful authentication"),
-            @ApiResponse(responseCode = "401", description = "Unauthorized")
+    public boolean validateToken(String token) {
+        try {
+            Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token);
+            return true;
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
         }
-    )
-    @PostMapping("/login")
-    public ResponseEntity<String> authenticateUser(@RequestBody AuthRequest request) {
-        return ResponseEntity.ok("JWT_TOKEN");
     }
 
-    <dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-api</artifactId>
-    <version>0.12.3</version>
-</dependency>
-<dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-impl</artifactId>
-    <version>0.12.3</version>
-    <scope>runtime</scope>
-</dependency>
-<dependency>
-    <groupId>io.jsonwebtoken</groupId>
-    <artifactId>jjwt-jackson</artifactId>
-    <version>0.12.3</version>
-    <scope>runtime</scope>
-</dependency>
+    public String getUsernameFromToken(String token) {
+        return Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .getSubject();
+    }
+
+    public String getRoleFromToken(String token) {
+        return Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .get("role", String.class);
+    }
+}
+
+📌 Environment Configuration
+
+Add your Base64-encoded secret key in application.properties:
+
+jwt.secret=YOUR_GENERATED_SECRET_KEY
+
+✅ 4. Authentication Controller
+
+A simple login endpoint that returns a JWT token.
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/auth")
+public class AuthController {
+
+    private final JwtUtil jwtUtil;
+
+    public AuthController(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody AuthRequest request) {
+        // Dummy authentication check (replace with real authentication)
+        if ("admin".equals(request.username()) && "password".equals(request.password())) {
+            String token = jwtUtil.generateToken(request.username(), "ROLE_ADMIN");
+            return ResponseEntity.ok(new AuthResponse(token));
+        }
+        return ResponseEntity.status(401).body("Invalid credentials");
+    }
+
+    public record AuthRequest(String username, String password) {}
+    public record AuthResponse(String token) {}
+}
+
+✅ 5. Secure API Endpoint (Example)
+
+A protected API that requires a valid JWT token.
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/secure")
+public class SecureController {
+
+    private final JwtUtil jwtUtil;
+
+    public SecureController(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
+
+    @GetMapping("/user-info")
+    public ResponseEntity<?> getUserInfo(@RequestHeader("Authorization") String token) {
+        token = token.replace("Bearer ", "");
+        if (!jwtUtil.validateToken(token)) {
+            return ResponseEntity.status(401).body("Invalid Token");
+        }
+        String username = jwtUtil.getUsernameFromToken(token);
+        String role = jwtUtil.getRoleFromToken(token);
+        return ResponseEntity.ok("User: " + username + ", Role: " + role);
+    }
+}
+
+✅ 6. Test Your API
+
+1️⃣ Generate a Token
+
+curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d '{"username": "admin", "password": "password"}'
+
+2️⃣ Use the Token to Access a Protected API
+
+curl -X GET http://localhost:8080/api/secure/user-info -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+🚀 Final Notes
+	•	Uses JJWT 0.12.6 (signWith() and verifyWith() methods).
+	•	Stores the secret key securely using application.properties.
+	•	Includes user roles inside the token.
+	•	Validates the token before accessing secure endpoints.
+
+Would you like to add Spring Security for automatic JWT validation? 🚀
