@@ -1,0 +1,240 @@
+D’accord, je vais te fournir une implémentation complète avec Spring Security, JWT, un MOC pour gérer les rôles temporairement, et une structure prête à intégrer LDAP plus tard.
+
+1️⃣ Création du projet Spring Boot
+
+Tu peux générer un projet avec Spring Initializr en incluant ces dépendances :
+	•	Spring Web
+	•	Spring Security
+	•	Spring Boot Starter Data JPA
+	•	Lombok (optionnel)
+	•	Spring Boot Starter Validation
+	•	jjwt (pour JWT)
+	•	Spring Boot Starter LDAP (pour la future intégration avec LDAP)
+
+2️⃣ Configuration de Spring Security et JWT
+
+🔹 Définir les constantes JWT
+
+Dans application.properties :
+
+jwt.secret=mySecretKey
+jwt.expiration=86400000 # 1 jour en millisecondes
+
+🔹 Créer une classe JwtUtil pour gérer les tokens
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.Date;
+import java.util.function.Function;
+
+@Component
+public class JwtUtil {
+    
+    @Value("${jwt.secret}")
+    private String secret;
+
+    @Value("${jwt.expiration}")
+    private long expirationMs;
+
+    public String generateToken(String username) {
+        return Jwts.builder()
+                .setSubject(username)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
+                .signWith(SignatureAlgorithm.HS256, secret)
+                .compact();
+    }
+
+    public String extractUsername(String token) {
+        return extractClaim(token, Claims::getSubject);
+    }
+
+    public Date extractExpiration(String token) {
+        return extractClaim(token, Claims::getExpiration);
+    }
+
+    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        final Claims claims = Jwts.parser()
+                .setSigningKey(secret)
+                .parseClaimsJws(token)
+                .getBody();
+        return claimsResolver.apply(claims);
+    }
+
+    public boolean isTokenValid(String token, String username) {
+        return (username.equals(extractUsername(token)) && !isTokenExpired(token));
+    }
+
+    private boolean isTokenExpired(String token) {
+        return extractExpiration(token).before(new Date());
+    }
+}
+
+3️⃣ MOC pour la gestion des utilisateurs et rôles
+
+Pour l’instant, on crée un service fictif qui renvoie des utilisateurs pré-définis :
+
+import org.springframework.stereotype.Service;
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class MockUserService {
+
+    private final List<User> users = List.of(
+            new User("admin", "password", "ADMIN"),
+            new User("user", "password", "USER")
+    );
+
+    public Optional<User> findByUsername(String username) {
+        return users.stream().filter(user -> user.getUsername().equals(username)).findFirst();
+    }
+}
+
+🔹 Modèle User
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+@Data
+@AllArgsConstructor
+public class User {
+    private String username;
+    private String password;
+    private String role;
+}
+
+4️⃣ Configurer Spring Security avec JWT
+
+🔹 Créer un filtre JWT
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.GenericFilterBean;
+
+import java.io.IOException;
+
+@Component
+public class JwtFilter extends GenericFilterBean {
+
+    private final JwtUtil jwtUtil;
+    private final UserDetailsService userDetailsService;
+
+    public JwtFilter(JwtUtil jwtUtil, UserDetailsService userDetailsService) {
+        this.jwtUtil = jwtUtil;
+        this.userDetailsService = userDetailsService;
+    }
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
+        HttpServletRequest httpRequest = (HttpServletRequest) request;
+        String authorizationHeader = httpRequest.getHeader("Authorization");
+
+        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+            String token = authorizationHeader.substring(7);
+            String username = jwtUtil.extractUsername(token);
+
+            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                if (jwtUtil.isTokenValid(token, userDetails.getUsername())) {
+                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities()
+                    );
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+            }
+        }
+        chain.doFilter(request, response);
+    }
+}
+
+🔹 Configurer SecurityConfig
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    private final JwtFilter jwtFilter;
+
+    public SecurityConfig(JwtFilter jwtFilter) {
+        this.jwtFilter = jwtFilter;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http.csrf().disable()
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/auth/login").permitAll()
+                .requestMatchers("/admin/**").hasRole("ADMIN")
+                .requestMatchers("/user/**").hasRole("USER")
+                .anyRequest().authenticated()
+            )
+            .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+}
+
+5️⃣ Contrôleur d’authentification
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/auth")
+public class AuthController {
+
+    private final MockUserService userService;
+    private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
+
+    public AuthController(MockUserService userService, JwtUtil jwtUtil, PasswordEncoder passwordEncoder) {
+        this.userService = userService;
+        this.jwtUtil = jwtUtil;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<String> login(@RequestParam String username, @RequestParam String password) {
+        return userService.findByUsername(username)
+                .filter(user -> passwordEncoder.matches(password, user.getPassword()))
+                .map(user -> ResponseEntity.ok(jwtUtil.generateToken(username)))
+                .orElse(ResponseEntity.status(401).build());
+    }
+}
+
+🚀 Tests et intégration LDAP plus tard
+
+Avec cette implémentation, tu peux déjà tester l’authentification avec JWT et le MOC. Plus tard, on pourra remplacer MockUserService par LDAP !
+
+Besoin d’ajustements ?
