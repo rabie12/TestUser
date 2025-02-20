@@ -1,26 +1,98 @@
-D’accord, je vais te fournir une implémentation complète avec Spring Security, JWT, un MOC pour gérer les rôles temporairement, et une structure prête à intégrer LDAP plus tard.
+OK, voici une implémentation complète de l’authentification avec Spring Security + JWT, tout en vérifiant les rôles via LDAP. Cette solution :
 
-1️⃣ Création du projet Spring Boot
+✅ Utilise LDAP pour vérifier si un utilisateur appartient à un groupe
+✅ Gère l’authentification avec JWT côté Spring Boot
+✅ Ne nécessite pas d’interface graphique
 
-Tu peux générer un projet avec Spring Initializr en incluant ces dépendances :
-	•	Spring Web
-	•	Spring Security
-	•	Spring Boot Starter Data JPA
-	•	Lombok (optionnel)
-	•	Spring Boot Starter Validation
-	•	jjwt (pour JWT)
-	•	Spring Boot Starter LDAP (pour la future intégration avec LDAP)
+📌 1. Ajouter les dépendances Spring Boot
 
-2️⃣ Configuration de Spring Security et JWT
+Ajoute ces dépendances dans ton pom.xml :
 
-🔹 Définir les constantes JWT
+<dependencies>
+    <!-- Spring Security -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
 
-Dans application.properties :
+    <!-- Spring Boot Web -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
 
-jwt.secret=mySecretKey
-jwt.expiration=86400000 # 1 jour en millisecondes
+    <!-- Spring LDAP -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-ldap</artifactId>
+    </dependency>
 
-🔹 Créer une classe JwtUtil pour gérer les tokens
+    <!-- JSON Web Token (JWT) -->
+    <dependency>
+        <groupId>io.jsonwebtoken</groupId>
+        <artifactId>jjwt</artifactId>
+        <version>0.11.5</version>
+    </dependency>
+
+    <!-- Spring Boot Validation -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- Lombok (facultatif, pour réduire le boilerplate) -->
+    <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+
+📌 2. Configuration de LDAP dans application.properties
+
+spring.ldap.urls=ldap://localhost:389
+spring.ldap.base=dc=example,dc=com
+spring.ldap.username=cn=admin,dc=example,dc=com
+spring.ldap.password=adminpassword
+
+🔹 Explication :
+	•	spring.ldap.urls → Adresse de ton serveur LDAP
+	•	spring.ldap.base → Base DN de ton annuaire
+	•	spring.ldap.username / spring.ldap.password → Credentials pour se connecter à LDAP
+
+📌 3. Service LDAP pour vérifier les rôles des utilisateurs
+
+import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.query.LdapQuery;
+import org.springframework.ldap.query.LdapQueryBuilder;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+@Service
+public class LdapService {
+    private final LdapTemplate ldapTemplate;
+
+    public LdapService(LdapTemplate ldapTemplate) {
+        this.ldapTemplate = ldapTemplate;
+    }
+
+    public boolean isUserInGroup(String username, String groupName) {
+        LdapQuery query = LdapQueryBuilder.query()
+                .base("ou=groups,dc=example,dc=com")
+                .where("cn").is(groupName)
+                .and("member").is("cn=" + username + ",ou=users,dc=example,dc=com");
+
+        List<String> result = ldapTemplate.search(query, (attributes, name) -> name.toString());
+        return !result.isEmpty();
+    }
+}
+
+🔹 Ce service vérifie si un utilisateur appartient à un groupe LDAP.
+
+📌 4. Génération et validation des tokens JWT
+
+🔹 Classe utilitaire JwtUtil.java
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -33,7 +105,7 @@ import java.util.function.Function;
 
 @Component
 public class JwtUtil {
-    
+
     @Value("${jwt.secret}")
     private String secret;
 
@@ -53,64 +125,26 @@ public class JwtUtil {
         return extractClaim(token, Claims::getSubject);
     }
 
-    public Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
+    public boolean validateToken(String token, String username) {
+        return (username.equals(extractUsername(token)) && !isTokenExpired(token));
     }
 
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+    private boolean isTokenExpired(String token) {
+        return extractClaim(token, Claims::getExpiration).before(new Date());
+    }
+
+    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
         final Claims claims = Jwts.parser()
                 .setSigningKey(secret)
                 .parseClaimsJws(token)
                 .getBody();
         return claimsResolver.apply(claims);
     }
-
-    public boolean isTokenValid(String token, String username) {
-        return (username.equals(extractUsername(token)) && !isTokenExpired(token));
-    }
-
-    private boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
-    }
 }
 
-3️⃣ MOC pour la gestion des utilisateurs et rôles
+🔹 Ce code gère la génération et la validation des JWT.
 
-Pour l’instant, on crée un service fictif qui renvoie des utilisateurs pré-définis :
-
-import org.springframework.stereotype.Service;
-import java.util.List;
-import java.util.Optional;
-
-@Service
-public class MockUserService {
-
-    private final List<User> users = List.of(
-            new User("admin", "password", "ADMIN"),
-            new User("user", "password", "USER")
-    );
-
-    public Optional<User> findByUsername(String username) {
-        return users.stream().filter(user -> user.getUsername().equals(username)).findFirst();
-    }
-}
-
-🔹 Modèle User
-
-import lombok.AllArgsConstructor;
-import lombok.Data;
-
-@Data
-@AllArgsConstructor
-public class User {
-    private String username;
-    private String password;
-    private String role;
-}
-
-4️⃣ Configurer Spring Security avec JWT
-
-🔹 Créer un filtre JWT
+📌 5. Filtre JWT pour intercepter les requêtes
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -118,8 +152,6 @@ import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.GenericFilterBean;
@@ -130,11 +162,9 @@ import java.io.IOException;
 public class JwtFilter extends GenericFilterBean {
 
     private final JwtUtil jwtUtil;
-    private final UserDetailsService userDetailsService;
 
-    public JwtFilter(JwtUtil jwtUtil, UserDetailsService userDetailsService) {
+    public JwtFilter(JwtUtil jwtUtil) {
         this.jwtUtil = jwtUtil;
-        this.userDetailsService = userDetailsService;
     }
 
     @Override
@@ -146,30 +176,23 @@ public class JwtFilter extends GenericFilterBean {
             String token = authorizationHeader.substring(7);
             String username = jwtUtil.extractUsername(token);
 
-            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                if (jwtUtil.isTokenValid(token, userDetails.getUsername())) {
-                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                            userDetails, null, userDetails.getAuthorities()
-                    );
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                }
+            if (username != null && jwtUtil.validateToken(token, username)) {
+                SecurityContextHolder.getContext().setAuthentication(
+                        new UsernamePasswordAuthenticationToken(username, null, List.of())
+                );
             }
         }
         chain.doFilter(request, response);
     }
 }
 
-🔹 Configurer SecurityConfig
+📌 6. Configuration de Spring Security
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
@@ -189,7 +212,6 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/auth/login").permitAll()
                 .requestMatchers("/admin/**").hasRole("ADMIN")
-                .requestMatchers("/user/**").hasRole("USER")
                 .anyRequest().authenticated()
             )
             .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -197,44 +219,36 @@ public class SecurityConfig {
 
         return http.build();
     }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
 }
 
-5️⃣ Contrôleur d’authentification
+📌 7. Contrôleur d’authentification
 
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
 
-    private final MockUserService userService;
+    private final LdapService ldapService;
     private final JwtUtil jwtUtil;
-    private final PasswordEncoder passwordEncoder;
 
-    public AuthController(MockUserService userService, JwtUtil jwtUtil, PasswordEncoder passwordEncoder) {
-        this.userService = userService;
+    public AuthController(LdapService ldapService, JwtUtil jwtUtil) {
+        this.ldapService = ldapService;
         this.jwtUtil = jwtUtil;
-        this.passwordEncoder = passwordEncoder;
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestParam String username, @RequestParam String password) {
-        return userService.findByUsername(username)
-                .filter(user -> passwordEncoder.matches(password, user.getPassword()))
-                .map(user -> ResponseEntity.ok(jwtUtil.generateToken(username)))
-                .orElse(ResponseEntity.status(401).build());
+    public String login(@RequestParam String username) {
+        if (ldapService.isUserInGroup(username, "admin")) {
+            return jwtUtil.generateToken(username);
+        }
+        return "Accès refusé";
     }
 }
 
-🚀 Tests et intégration LDAP plus tard
-
-Avec cette implémentation, tu peux déjà tester l’authentification avec JWT et le MOC. Plus tard, on pourra remplacer MockUserService par LDAP !
+🚀 Conclusion
+	1.	LDAP vérifie si l’utilisateur appartient à un groupe
+	2.	Si oui, un JWT est généré
+	3.	Les requêtes utilisent le JWT pour s’authentifier
 
 Besoin d’ajustements ?
