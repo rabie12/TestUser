@@ -1,9 +1,3 @@
-Voici les étapes pour modifier la relation des rôles en ManyToOne et générer une migration Liquibase.
-
-1️⃣ Modifier l’entité User
-
-Remplace la relation @ManyToMany par @ManyToOne, ce qui signifie qu’un utilisateur ne peut avoir qu’un seul rôle.
-
 @Entity
 @Table(name = "user")
 @Data
@@ -25,13 +19,17 @@ public class User implements UserDetails {
 
     private String password;
 
-    @ManyToOne
-    @JoinColumn(name = "user_role_id", nullable = false)
-    private UserRole role; // 🔥 Un seul rôle par utilisateur
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(
+            name = "user_role",  // Manually define join table name
+            joinColumns = @JoinColumn(name = "user_id"),  // Join user ID
+            inverseJoinColumns = @JoinColumn(name = "role_id")  // Join role ID
+    )
+    private Set<UserRole> roles = new HashSet<>();
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(role); // 🔥 Retourne l'autorité liée au rôle
+        return roles.stream().map(UserRole::getAuthority).collect(Collectors.toList()); // Return roles as authorities
     }
 
     @Override
@@ -46,72 +44,3 @@ public class User implements UserDetails {
     @Override
     public boolean isEnabled() { return true; }
 }
-
-2️⃣ Modifier l’entité UserRole
-
-Ajoute l’implémentation de GrantedAuthority pour qu’elle soit reconnue par Spring Security.
-
-@Entity
-@Table(name = "user_role")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class UserRole implements GrantedAuthority {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(unique = true, nullable = false)
-    private String name; // Exemple : ROLE_ADMIN, ROLE_USER
-
-    @Override
-    public String getAuthority() {
-        return name; // 🔥 Retourne le rôle sous forme d'autorité Spring Security
-    }
-}
-
-3️⃣ Générer la migration Liquibase
-
-Ajoute ce fichier Liquibase dans resources/db/changelog/changes/modify_user_role_relation.xml :
-
-<databaseChangeLog
-        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
-        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
-
-    <changeSet id="modify-user-role-relation" author="dev">
-        <!-- Supprime la table intermédiaire de ManyToMany -->
-        <dropTable tableName="user__user_role"/>
-
-        <!-- Ajoute la colonne user_role_id dans user -->
-        <addColumn tableName="user">
-            <column name="user_role_id" type="bigint"/>
-        </addColumn>
-
-        <!-- Ajoute une contrainte de clé étrangère -->
-        <addForeignKeyConstraint 
-            baseTableName="user" 
-            baseColumnNames="user_role_id"
-            referencedTableName="user_role"
-            referencedColumnNames="id"
-            constraintName="fk_user_role"/>
-    </changeSet>
-</databaseChangeLog>
-
-4️⃣ Ajout à master.xml
-
-Ajoute cette ligne dans resources/db/changelog/master.xml pour exécuter la migration :
-
-<include file="db/changelog/changes/modify_user_role_relation.xml"/>
-
-5️⃣ Lancer la migration
-
-Exécute la commande :
-
-mvn spring-boot:run
-
-Liquibase appliquera la migration automatiquement. 🚀
-
-Tu es prêt ! Maintenant chaque utilisateur a un seul rôle, et la migration est automatisée avec Liquibase. 🔥
