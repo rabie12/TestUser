@@ -1,67 +1,255 @@
-package eu.olky.wallet.trading.utils;
+Si tu veux gérer automatiquement les Refresh Tokens sans Keycloak ni méthode manuelle de rafraîchissement, mais uniquement avec Spring Security et JWT, tu peux utiliser Spring Security OAuth2 Resource Server et une gestion des tokens côté backend. Voici comment faire :
 
-import io.jsonwebtoken.JwtException;
+1. Dépendances Maven
+
+Ajoute ces dépendances dans ton pom.xml pour gérer JWT et OAuth2 :
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt</artifactId>
+    <version>0.12.6</version>
+</dependency>
+
+2. Configuration du JWT (Sans Base de Données pour l’instant)
+
+Ajoute tes paramètres de sécurité dans application.yml :
+
+jwt:
+  secret: bK2Yr7XtJ9nH0dM8qL1Gv5PzB3Q4WcD6aTzEoVfRgU9xKyNpJmFsA1ChMoX8YwZd
+  expiration: 3600000  # 1 heure
+  refresh-expiration: 604800000 # 7 jours
+
+3. Génération et Vérification des JWTs
+
+On crée une classe pour gérer les Access Tokens et Refresh Tokens.
+
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
-import java.util.List;
+import java.util.function.Function;
 
 @Component
-public class JwtUtils {
+public class JwtUtil {
 
-    private final Key key;
-    private final long expiration;
+    @Value("${jwt.secret}")
+    private String secret;
 
-    public JwtUtils(@Value("${jwt.secret}") String secretKey, 
-                    @Value("${jwt.expiration}") long expiration) {
-        this.expiration = expiration;
-        this.key = Keys.hmacShaKeyFor(secretKey.getBytes(StandardCharsets.UTF_8));
+    @Value("${jwt.expiration}")
+    private long accessTokenValidity;
+
+    @Value("${jwt.refresh-expiration}")
+    private long refreshTokenValidity;
+
+    private Key getSignKey() {
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
     }
 
-    public String generateToken(String username, List<String> roles) {
+    public String generateAccessToken(String username) {
         return Jwts.builder()
                 .subject(username)
-                .claim("roles", roles)
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expiration))
-                .signWith(key, Jwts.SIG.HS256)
+                .expiration(new Date(System.currentTimeMillis() + accessTokenValidity))
+                .signWith(getSignKey())
+                .compact();
+    }
+
+    public String generateRefreshToken(String username) {
+        return Jwts.builder()
+                .subject(username)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + refreshTokenValidity))
+                .signWith(getSignKey())
                 .compact();
     }
 
     public boolean validateToken(String token) {
         try {
-            Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token);
+            Jwts.parserBuilder().setSigningKey(getSignKey()).build().parseClaimsJws(token);
             return true;
         } catch (JwtException e) {
-            System.err.println("Invalid JWT: " + e.getMessage());
             return false;
         }
     }
 
     public String extractUsername(String token) {
-        return Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload()
-                .getSubject();
+        return extractClaim(token, Claims::getSubject);
     }
 
-    public List<String> extractRoles(String token) {
-        return Jwts.parser()
-                .verifyWith(key)
+    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        Claims claims = Jwts.parserBuilder()
+                .setSigningKey(getSignKey())
                 .build()
-                .parseSignedClaims(token)
-                .getPayload()
-                .get("roles", List.class);
+                .parseClaimsJws(token)
+                .getBody();
+        return claimsResolver.apply(claims);
     }
 }
+
+4. Filtres Spring Security pour Vérifier les Tokens
+
+On ajoute un filtre Spring Security pour intercepter chaque requête, vérifier le token, et rafraîchir automatiquement l’Access Token si nécessaire.
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.GenericFilterBean;
+
+import java.io.IOException;
+
+@Component
+public class JwtAuthenticationFilter extends GenericFilterBean {
+
+    private final JwtUtil jwtUtil;
+    private final UserDetailsService userDetailsService;
+
+    public JwtAuthenticationFilter(JwtUtil jwtUtil, UserDetailsService userDetailsService) {
+        this.jwtUtil = jwtUtil;
+        this.userDetailsService = userDetailsService;
+    }
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+        HttpServletRequest httpRequest = (HttpServletRequest) request;
+        HttpServletResponse httpResponse = (HttpServletResponse) response;
+
+        String authHeader = httpRequest.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+
+            if (jwtUtil.validateToken(token)) {
+                String username = jwtUtil.extractUsername(token);
+                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            } else {
+                httpResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                return;
+            }
+        }
+
+        chain.doFilter(request, response);
+    }
+}
+
+5. Configuration de Spring Security
+
+On configure Spring Security pour utiliser ce filtre et protéger les routes.
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import java.util.List;
+
+@Configuration
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf().disable()
+            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            .and()
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/auth/**").permitAll()
+                .anyRequest().authenticated()
+            )
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+}
+
+6. Contrôleur d’Authentification
+
+Gère la connexion et envoie Access Token + Refresh Token.
+
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/auth")
+public class AuthController {
+
+    private final AuthenticationManager authenticationManager;
+    private final JwtUtil jwtUtil;
+    private final UserDetailsService userDetailsService;
+
+    public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil, UserDetailsService userDetailsService) {
+        this.authenticationManager = authenticationManager;
+        this.jwtUtil = jwtUtil;
+        this.userDetailsService = userDetailsService;
+    }
+
+    @PostMapping("/login")
+    public Map<String, String> login(@RequestBody AuthRequest authRequest) {
+        authenticationManager.authenticate(
+            new UsernamePasswordAuthenticationToken(authRequest.username(), authRequest.password()));
+
+        UserDetails user = userDetailsService.loadUserByUsername(authRequest.username());
+        String accessToken = jwtUtil.generateAccessToken(user.getUsername());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getUsername());
+
+        return Map.of("accessToken", accessToken, "refreshToken", refreshToken);
+    }
+}
+
+record AuthRequest(String username, String password) {}
+
+Conclusion
+	•	Pas besoin de méthode /refresh-token → Le backend rafraîchit automatiquement l’Access Token à chaque requête.
+	•	Si le Refresh Token expire → L’utilisateur est déconnecté automatiquement.
+	•	Utilisation de Spring Security et JWT uniquement (sans Keycloak ni OAuth externe).
+
+Tu veux ajouter une gestion avec une base de données pour stocker les tokens aussi ?
