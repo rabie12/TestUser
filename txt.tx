@@ -1,125 +1,86 @@
-    D’accord ! On va déplacer toute la logique d’authentification et de vérification LDAP dans un service dédié. Le contrôleur ne fera qu’appeler ce service et renvoyer la réponse.
+L’authentification avec Spring Security suit plusieurs étapes bien définies. Voici où et quand se passe la vérification du username et du mot de passe.
 
-📌 Étape 1 : Service d’Authentification
+📌 Étape par Étape de l’Authentification
 
-On crée un AuthService qui gère :
-	•	Vérification du groupe LDAP avant authentification.
-	•	Authentification avec AuthenticationManager.
-	•	Génération et retour des tokens.
+1️⃣ Le client envoie une requête de login
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.stereotype.Service;
+Quand un utilisateur tente de se connecter, il envoie une requête POST avec son username et password :
 
-import java.util.Map;
+POST /auth/login
+Content-Type: application/json
 
-@Service
-public class AuthService {
-
-    private final AuthenticationManager authenticationManager;
-    private final JwtUtil jwtUtil;
-    private final LdapGroupChecker ldapGroupChecker;
-    private final MyUserDetailsService userDetailsService;
-
-    public AuthService(AuthenticationManager authenticationManager, JwtUtil jwtUtil, 
-                       LdapGroupChecker ldapGroupChecker, MyUserDetailsService userDetailsService) {
-        this.authenticationManager = authenticationManager;
-        this.jwtUtil = jwtUtil;
-        this.ldapGroupChecker = ldapGroupChecker;
-        this.userDetailsService = userDetailsService;
-    }
-
-    public ResponseEntity<?> authenticateUser(String username, String password) {
-        // 🔍 Vérifie si l'utilisateur appartient au groupe LDAP
-        if (!ldapGroupChecker.isUserInGroup(username, "admins")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(Map.of("error", "Accès refusé : vous n'êtes pas autorisé."));
-        }
-
-        try {
-            // 🔐 Authentification avec Spring Security
-            Authentication authentication = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(username, password));
-
-            UserDetails user = userDetailsService.loadUserByUsername(username);
-
-            // 🎫 Génération des tokens JWT
-            String accessToken = jwtUtil.generateAccessToken(user.getUsername());
-            String refreshToken = jwtUtil.generateRefreshToken(user.getUsername());
-
-            return ResponseEntity.ok(Map.of(
-                    "accessToken", accessToken,
-                    "refreshToken", refreshToken,
-                    "message", "Authentification réussie"
-            ));
-        } catch (BadCredentialsException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Nom d'utilisateur ou mot de passe incorrect"));
-        }
-    }
+{
+    "username": "john_doe",
+    "password": "mypassword"
 }
 
-📌 Étape 2 : Vérification LDAP
+Le contrôleur (AuthController) passe ensuite ces informations au AuthService :
 
-Création d’un service LdapGroupChecker pour vérifier si un utilisateur appartient à un groupe.
-
-import org.springframework.ldap.core.LdapTemplate;
-import org.springframework.ldap.query.LdapQuery;
-import org.springframework.ldap.query.LdapQueryBuilder;
-import org.springframework.stereotype.Service;
-
-@Service
-public class LdapGroupChecker {
-
-    private final LdapTemplate ldapTemplate;
-
-    public LdapGroupChecker(LdapTemplate ldapTemplate) {
-        this.ldapTemplate = ldapTemplate;
-    }
-
-    public boolean isUserInGroup(String username, String group) {
-        LdapQuery query = LdapQueryBuilder.query()
-                .base("ou=groups,dc=example,dc=com") // Adapte selon ton LDAP
-                .where("objectClass").is("groupOfNames")
-                .and("cn").is(group)
-                .and("member").is("uid=" + username + ",ou=users,dc=example,dc=com");
-
-        return ldapTemplate.find(query, String.class).size() > 0;
-    }
+public ResponseEntity<?> login(@RequestBody AuthRequest authRequest) {
+    return authService.authenticateUser(authRequest.getUsername(), authRequest.getPassword());
 }
 
-📌 Étape 3 : Contrôleur Simplifié
+2️⃣ authenticationManager.authenticate(...) est appelé
 
-Le contrôleur (AuthController) ne fait plus rien d’autre que d’appeler le service.
+Dans AuthService, on fait :
 
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+Authentication authentication = authenticationManager.authenticate(
+    new UsernamePasswordAuthenticationToken(username, password)
+);
 
-@RestController
-@RequestMapping("/auth")
-public class AuthController {
+📌 Que se passe-t-il ici ?
+	•	authenticationManager va chercher un AuthenticationProvider capable de traiter ce type de requête.
+	•	Par défaut, Spring Security utilise DaoAuthenticationProvider pour les identifiants en base de données.
 
-    private final AuthService authService;
+3️⃣ DaoAuthenticationProvider vérifie les identifiants
 
-    public AuthController(AuthService authService) {
-        this.authService = authService;
-    }
+Le DaoAuthenticationProvider effectue deux tâches :
+	1.	🔍 Charge l’utilisateur en base via UserDetailsService :
 
-    @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody AuthRequest authRequest) {
-        return authService.authenticateUser(authRequest.getUsername(), authRequest.getPassword());
-    }
-}
+UserDetails user = userDetailsService.loadUserByUsername(username);
 
-📌 Résumé
+	•	Cette méthode interroge la base de données et renvoie un objet UserDetails avec les informations de l’utilisateur.
+	•	Si l’utilisateur n’existe pas, Spring Security lève une UsernameNotFoundException → Erreur 401.
 
-✅ Tout est dans AuthService : gestion des groupes, authentification et génération des tokens.
-✅ Le contrôleur est minimaliste : il délègue tout au service.
-✅ Meilleure organisation du code, facile à maintenir et tester.
+	2.	🔐 Vérifie le mot de passe :
 
-Tu veux ajouter une configuration dynamique des groupes autorisés via application.yml ?
+passwordEncoder.matches(passwordSaisi, passwordStocke);
+
+	•	DaoAuthenticationProvider compare le mot de passe saisi avec celui stocké en base (qui est hashé avec BCrypt).
+	•	Si le mot de passe ne correspond pas, Spring Security lève une BadCredentialsException → Erreur 401.
+
+4️⃣ Si l’authentification réussit
+
+Si le username et le mot de passe sont corrects :
+	•	Spring Security crée un UsernamePasswordAuthenticationToken qui contient l’utilisateur authentifié et ses rôles.
+	•	Cet objet est stocké dans le SecurityContext.
+
+SecurityContextHolder.getContext().setAuthentication(authentication);
+
+Puis, on génère un JWT (access token + refresh token) et on l’envoie en réponse :
+
+String accessToken = jwtUtil.generateAccessToken(user.getUsername());
+String refreshToken = jwtUtil.generateRefreshToken(user.getUsername());
+
+return ResponseEntity.ok(Map.of(
+    "accessToken", accessToken,
+    "refreshToken", refreshToken,
+    "message", "Authentification réussie"
+));
+
+📌 Résumé du Processus
+	1.	Le client envoie username et password via un POST /auth/login.
+	2.	authenticationManager.authenticate(...) est appelé.
+	3.	DaoAuthenticationProvider demande UserDetailsService.loadUserByUsername(username) :
+	•	Si l’utilisateur n’existe pas → Erreur 401.
+	4.	Spring Security compare le mot de passe avec BCrypt :
+	•	Si incorrect → Erreur 401.
+	5.	Si tout est OK, Spring Security crée une session et génère un JWT.
+
+📌 Où exactement a lieu la vérification ?
+
+✅ La recherche du username est faite dans UserDetailsService.loadUserByUsername(username).
+✅ La vérification du mot de passe est faite dans DaoAuthenticationProvider, en comparant avec BCrypt.
+✅ Si tout est bon, l’utilisateur est authentifié et un JWT est généré.
+
+Tu veux ajouter un refresh token automatique sans endpoint /refresh ?
