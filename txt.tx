@@ -1,25 +1,125 @@
-    public boolean isUserInGroup(String username, String groupName) {
-        LdapQuery query = LdapQueryBuilder.query()
-                .base(base)
-                .where("cn").is("OlkyWallet_UAT_AppBO")
-                .and("member").is("cn=" + username + ",OU=Groupe_Olky,DC=OLKYPAY,DC=LOCAL");
+    D’accord ! On va déplacer toute la logique d’authentification et de vérification LDAP dans un service dédié. Le contrôleur ne fera qu’appeler ce service et renvoyer la réponse.
 
-        List<String> result = ldapTemplate.search(query, new AttributesMapper<String>() {
-            @Override
-            public String mapFromAttributes(Attributes attributes) throws NamingException {
-                return attributes.get("cn") != null ? attributes.get("cn").get().toString() : null;
-            }
-        });
+📌 Étape 1 : Service d’Authentification
 
-        return !result.isEmpty();
+On crée un AuthService qui gère :
+	•	Vérification du groupe LDAP avant authentification.
+	•	Authentification avec AuthenticationManager.
+	•	Génération et retour des tokens.
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Service;
+
+import java.util.Map;
+
+@Service
+public class AuthService {
+
+    private final AuthenticationManager authenticationManager;
+    private final JwtUtil jwtUtil;
+    private final LdapGroupChecker ldapGroupChecker;
+    private final MyUserDetailsService userDetailsService;
+
+    public AuthService(AuthenticationManager authenticationManager, JwtUtil jwtUtil, 
+                       LdapGroupChecker ldapGroupChecker, MyUserDetailsService userDetailsService) {
+        this.authenticationManager = authenticationManager;
+        this.jwtUtil = jwtUtil;
+        this.ldapGroupChecker = ldapGroupChecker;
+        this.userDetailsService = userDetailsService;
     }
 
+    public ResponseEntity<?> authenticateUser(String username, String password) {
+        // 🔍 Vérifie si l'utilisateur appartient au groupe LDAP
+        if (!ldapGroupChecker.isUserInGroup(username, "admins")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Accès refusé : vous n'êtes pas autorisé."));
+        }
+
+        try {
+            // 🔐 Authentification avec Spring Security
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(username, password));
+
+            UserDetails user = userDetailsService.loadUserByUsername(username);
+
+            // 🎫 Génération des tokens JWT
+            String accessToken = jwtUtil.generateAccessToken(user.getUsername());
+            String refreshToken = jwtUtil.generateRefreshToken(user.getUsername());
+
+            return ResponseEntity.ok(Map.of(
+                    "accessToken", accessToken,
+                    "refreshToken", refreshToken,
+                    "message", "Authentification réussie"
+            ));
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Nom d'utilisateur ou mot de passe incorrect"));
+        }
+    }
 }
-    public String authenticate(UserDTO userDTO) {
 
-        return userRepository.findByUsername(userDTO.username())
-                .filter(user -> secretService.verifySecret(userDTO.secret(), user.getSecret()))
-                //TODO
-                .map(user -> jwtUtil.generateToken(userDTO.username(),"OLKY_ADMIN"))
-                .orElseThrow(() -> new RuntimeException("Identifiants incorrects"));
+📌 Étape 2 : Vérification LDAP
+
+Création d’un service LdapGroupChecker pour vérifier si un utilisateur appartient à un groupe.
+
+import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.query.LdapQuery;
+import org.springframework.ldap.query.LdapQueryBuilder;
+import org.springframework.stereotype.Service;
+
+@Service
+public class LdapGroupChecker {
+
+    private final LdapTemplate ldapTemplate;
+
+    public LdapGroupChecker(LdapTemplate ldapTemplate) {
+        this.ldapTemplate = ldapTemplate;
     }
+
+    public boolean isUserInGroup(String username, String group) {
+        LdapQuery query = LdapQueryBuilder.query()
+                .base("ou=groups,dc=example,dc=com") // Adapte selon ton LDAP
+                .where("objectClass").is("groupOfNames")
+                .and("cn").is(group)
+                .and("member").is("uid=" + username + ",ou=users,dc=example,dc=com");
+
+        return ldapTemplate.find(query, String.class).size() > 0;
+    }
+}
+
+📌 Étape 3 : Contrôleur Simplifié
+
+Le contrôleur (AuthController) ne fait plus rien d’autre que d’appeler le service.
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/auth")
+public class AuthController {
+
+    private final AuthService authService;
+
+    public AuthController(AuthService authService) {
+        this.authService = authService;
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody AuthRequest authRequest) {
+        return authService.authenticateUser(authRequest.getUsername(), authRequest.getPassword());
+    }
+}
+
+📌 Résumé
+
+✅ Tout est dans AuthService : gestion des groupes, authentification et génération des tokens.
+✅ Le contrôleur est minimaliste : il délègue tout au service.
+✅ Meilleure organisation du code, facile à maintenir et tester.
+
+Tu veux ajouter une configuration dynamique des groupes autorisés via application.yml ?
