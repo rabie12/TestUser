@@ -1,7 +1,8 @@
-Required type:
-Collection
-<? extends GrantedAuthority>
-Provided:
-Set
-<String>
-no instance(s) of type variable(s) exist so that String conforms to GrantedAuthority
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
+@Override
+public Collection<? extends GrantedAuthority> getAuthorities() {
+    return roles.stream()
+            .map(role -> new SimpleGrantedAuthority(role.getAuthority()))  // Map UserRole to SimpleGrantedAuthority
+            .collect(Collectors.toSet()); // Collect into a Set of GrantedAuthority
+}
