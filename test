@@ -1,1 +1,65 @@
- "org.springframework.security.authentication.InternalAuthenticationServiceException: simple bind failed: ORT-ADM-AD-02.olkypay.local:636\r\n\tat org.springframework.security.ldap.authentication.LdapAuthenticationProvider.doAuthentication(LdapAuthenticationProvider.java:190)\r\n\tat org.springframework.security.ldap.authentication.AbstractLdapAuthenticationProvider.authenticate(AbstractLdapAuthenticationProvider.java:80)\r\n\tat org.springframework.security.authentication.ProviderManager.authenticate(ProviderManager.java:182)\r\n\tat eu.olky.wallet.trading.service.AuthService.authenticateUser(AuthService.java:52)\r\n\tat eu.olky.wallet.trading.controller.AuthController.login(AuthController.java:34)\r\n\tat java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)\r\n\tat java.base/java.lang.reflect.Method.invoke(Method.java:580)\r\n\tat org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:257)\r\n\tat org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:190)\r\n\tat org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)\r\n\tat org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:986)\r\n\tat org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:891)\r\n\tat org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)\r\n\tat org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1088)\r\n\tat org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:978)\r\n\tat org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)\r\n\tat org.springframework.web.servlet.FrameworkServlet.doPost(FrameworkServlet.java:914)\r\n\tat jakarta.servlet.http.HttpServlet.service(HttpServlet.java:590)\r\n\tat org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)\r\n\tat jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)\r\n\tat org.apache.catalina.core.ApplicationFilterChain.internalDo
+If you have a certificate file without an extension and need to convert it to a Java Keystore (.jks), you typically need to determine what kind of certificate it is (e.g., .pem, .crt, .pfx, .der, etc.). Here’s how you can proceed:
+
+Step 1: Identify the File Type
+
+Run the following command to check the type of the certificate file:
+
+file your_certificate
+
+If it’s a PEM file (text format), it will contain:
+
+-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+
+If it’s a DER file (binary format), the output may indicate DER encoded certificate.
+
+Step 2: Convert to JKS
+
+Depending on the certificate type, follow the appropriate conversion method:
+
+Option 1: If You Have a PEM or CRT File
+
+You need to import it into a JKS file.
+
+Convert PEM to PKCS12
+
+Convert the PEM/CRT file to a PKCS12 keystore first:
+
+openssl pkcs12 -export -in your_certificate.pem -inkey your_private_key.pem -out keystore.p12 -name myalias -password pass:changeit
+
+Convert PKCS12 to JKS
+
+Then, convert it into a JKS keystore using keytool:
+
+keytool -importkeystore -srckeystore keystore.p12 -srcstoretype PKCS12 -destkeystore keystore.jks -deststoretype JKS -srcstorepass changeit -deststorepass changeit
+
+Option 2: If You Have a PFX or P12 File
+
+If your file is already in PKCS12 (.pfx or .p12), convert it directly to JKS:
+
+keytool -importkeystore -srckeystore your_certificate.pfx -srcstoretype PKCS12 -destkeystore keystore.jks -deststoretype JKS -srcstorepass changeit -deststorepass changeit
+
+Option 3: If You Have a DER File
+
+Convert DER to PEM first:
+
+openssl x509 -inform der -in your_certificate.der -out your_certificate.pem
+
+Then follow Option 1 above.
+
+Step 3: Verify the Keystore
+
+After conversion, check the keystore entries:
+
+keytool -list -v -keystore keystore.jks -storepass changeit
+
+If you see:
+
+alias name null does not identify a key entry
+
+It means the certificate was imported incorrectly without a valid alias. Try importing it again with:
+
+keytool -import -trustcacerts -file your_certificate.pem -keystore keystore.jks -alias myalias -storepass changeit
+
+Let me know if you need further clarification!
