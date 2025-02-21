@@ -1,46 +1,7 @@
-@Entity
-@Table(name = "user")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class User implements UserDetails {
-    @Id
-    @UuidGenerator
-    @Column(name = "id", updatable = false, nullable = false)
-    private UUID id;
-
-    @Column(unique = true, nullable = false)
-    private String username;
-
-    private String email;
-
-    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
-    private List<Passkey> passkeys = new ArrayList<>();
-
-    private String password;
-
-    @ManyToMany(fetch = FetchType.EAGER)
-    @JoinTable(
-            name = "user_role",  // Manually define join table name
-            joinColumns = @JoinColumn(name = "user_id"),  // Join user ID
-            inverseJoinColumns = @JoinColumn(name = "role_id")  // Join role ID
-    )
-    private Set<UserRole> roles = new HashSet<>();
-
-    @Override
-    public Collection<? extends GrantedAuthority> getAuthorities() {
-        return roles.stream().map(UserRole::getAuthority).collect(Collectors.toList()); // Return roles as authorities
-    }
-
-    @Override
-    public boolean isAccountNonExpired() { return true; }
-
-    @Override
-    public boolean isAccountNonLocked() { return true; }
-
-    @Override
-    public boolean isCredentialsNonExpired() { return true; }
-
-    @Override
-    public boolean isEnabled() { return true; }
-}
+Required type:
+Collection
+<? extends GrantedAuthority>
+Provided:
+Set
+<String>
+no instance(s) of type variable(s) exist so that String conforms to GrantedAuthority
