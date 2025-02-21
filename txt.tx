@@ -1,86 +1,52 @@
-L’authentification avec Spring Security suit plusieurs étapes bien définies. Voici où et quand se passe la vérification du username et du mot de passe.
+Groupe AD pour accès app UAT/DEV: 
 
-📌 Étape par Étape de l’Authentification
+CN=OlkyWallet_UAT_AppBO,OU=OlkyWallet,OU=ServicesAccounts,OU=Groupe_Olky,DC=OLKYPAY,DC=LOCAL
 
-1️⃣ Le client envoie une requête de login
+J'ai mix XRX et XLE pour le moment.
 
-Quand un utilisateur tente de se connecter, il envoie une requête POST avec son username et password :
+Groupe AD pour accès app PRD:
 
-POST /auth/login
-Content-Type: application/json
+CN=OlkyWallet_PRD_AppBO,OU=OlkyWallet,OU=ServicesAccounts,OU=Groupe_Olky,DC=OLKYPAY,DC=LOCAL
 
-{
-    "username": "john_doe",
-    "password": "mypassword"
-}
+Groupe Vide pour le moment
 
-Le contrôleur (AuthController) passe ensuite ces informations au AuthService :
+uri
+ldaps://ORT-ADM-AD-02.olkypay.local
+Nom d'utilisateur
+olkywallet.bind
 
-public ResponseEntity<?> login(@RequestBody AuthRequest authRequest) {
-    return authService.authenticateUser(authRequest.getUsername(), authRequest.getPassword());
-}
+    public boolean isUserInGroup(String username, String groupName) {
+        LdapQuery query = LdapQueryBuilder.query()
+                .base(base)
+                .where("cn").is("OlkyWallet_UAT_AppBO")
+                .and("member").is("cn=" + username + ",OU=Groupe_Olky,DC=OLKYPAY,DC=LOCAL");
 
-2️⃣ authenticationManager.authenticate(...) est appelé
+        List<String> result = ldapTemplate.search(query, new AttributesMapper<String>() {
+            @Override
+            public String mapFromAttributes(Attributes attributes) throws NamingException {
+                return attributes.get("cn") != null ? attributes.get("cn").get().toString() : null;
+            }
+        });
 
-Dans AuthService, on fait :
 
-Authentication authentication = authenticationManager.authenticate(
-    new UsernamePasswordAuthenticationToken(username, password)
-);
 
-📌 Que se passe-t-il ici ?
-	•	authenticationManager va chercher un AuthenticationProvider capable de traiter ce type de requête.
-	•	Par défaut, Spring Security utilise DaoAuthenticationProvider pour les identifiants en base de données.
 
-3️⃣ DaoAuthenticationProvider vérifie les identifiants
+processing failed: org.springframework.ldap.CommunicationException: simple bind failed: ORT-ADM-AD-02.olkypay.local:389] with root cause
 
-Le DaoAuthenticationProvider effectue deux tâches :
-	1.	🔍 Charge l’utilisateur en base via UserDetailsService :
-
-UserDetails user = userDetailsService.loadUserByUsername(username);
-
-	•	Cette méthode interroge la base de données et renvoie un objet UserDetails avec les informations de l’utilisateur.
-	•	Si l’utilisateur n’existe pas, Spring Security lève une UsernameNotFoundException → Erreur 401.
-
-	2.	🔐 Vérifie le mot de passe :
-
-passwordEncoder.matches(passwordSaisi, passwordStocke);
-
-	•	DaoAuthenticationProvider compare le mot de passe saisi avec celui stocké en base (qui est hashé avec BCrypt).
-	•	Si le mot de passe ne correspond pas, Spring Security lève une BadCredentialsException → Erreur 401.
-
-4️⃣ Si l’authentification réussit
-
-Si le username et le mot de passe sont corrects :
-	•	Spring Security crée un UsernamePasswordAuthenticationToken qui contient l’utilisateur authentifié et ses rôles.
-	•	Cet objet est stocké dans le SecurityContext.
-
-SecurityContextHolder.getContext().setAuthentication(authentication);
-
-Puis, on génère un JWT (access token + refresh token) et on l’envoie en réponse :
-
-String accessToken = jwtUtil.generateAccessToken(user.getUsername());
-String refreshToken = jwtUtil.generateRefreshToken(user.getUsername());
-
-return ResponseEntity.ok(Map.of(
-    "accessToken", accessToken,
-    "refreshToken", refreshToken,
-    "message", "Authentification réussie"
-));
-
-📌 Résumé du Processus
-	1.	Le client envoie username et password via un POST /auth/login.
-	2.	authenticationManager.authenticate(...) est appelé.
-	3.	DaoAuthenticationProvider demande UserDetailsService.loadUserByUsername(username) :
-	•	Si l’utilisateur n’existe pas → Erreur 401.
-	4.	Spring Security compare le mot de passe avec BCrypt :
-	•	Si incorrect → Erreur 401.
-	5.	Si tout est OK, Spring Security crée une session et génère un JWT.
-
-📌 Où exactement a lieu la vérification ?
-
-✅ La recherche du username est faite dans UserDetailsService.loadUserByUsername(username).
-✅ La vérification du mot de passe est faite dans DaoAuthenticationProvider, en comparant avec BCrypt.
-✅ Si tout est bon, l’utilisateur est authentifié et un JWT est généré.
-
-Tu veux ajouter un refresh token automatique sans endpoint /refresh ?
+java.net.SocketException: Connection or outbound has closed
+	at java.base/sun.security.ssl.SSLSocketImpl$AppOutputStream.write(SSLSocketImpl.java:1297) ~[na:na]
+	at java.base/java.io.BufferedOutputStream.flushBuffer(BufferedOutputStream.java:125) ~[na:na]
+	at java.base/java.io.BufferedOutputStream.implFlush(BufferedOutputStream.java:252) ~[na:na]
+	at java.base/java.io.BufferedOutputStream.flush(BufferedOutputStream.java:240) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.Connection.writeRequest(Connection.java:418) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.Connection.writeRequest(Connection.java:391) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapClient.ldapBind(LdapClient.java:363) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapClient.authenticate(LdapClient.java:218) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtx.connect(LdapCtx.java:2896) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtx.<init>(LdapCtx.java:349) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxFromUrl(LdapCtxFactory.java:229) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURL(LdapCtxFactory.java:189) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURLs(LdapCtxFactory.java:247) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxInstance(LdapCtxFactory.java:154) ~[na:na]
+	at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getInitialContext(LdapCtxFactory.java:84) ~[na:na]
+	at java.nami
