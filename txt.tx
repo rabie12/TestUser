@@ -1,0 +1,25 @@
+    public boolean isUserInGroup(String username, String groupName) {
+        LdapQuery query = LdapQueryBuilder.query()
+                .base(base)
+                .where("cn").is("OlkyWallet_UAT_AppBO")
+                .and("member").is("cn=" + username + ",OU=Groupe_Olky,DC=OLKYPAY,DC=LOCAL");
+
+        List<String> result = ldapTemplate.search(query, new AttributesMapper<String>() {
+            @Override
+            public String mapFromAttributes(Attributes attributes) throws NamingException {
+                return attributes.get("cn") != null ? attributes.get("cn").get().toString() : null;
+            }
+        });
+
+        return !result.isEmpty();
+    }
+
+}
+    public String authenticate(UserDTO userDTO) {
+
+        return userRepository.findByUsername(userDTO.username())
+                .filter(user -> secretService.verifySecret(userDTO.secret(), user.getSecret()))
+                //TODO
+                .map(user -> jwtUtil.generateToken(userDTO.username(),"OLKY_ADMIN"))
+                .orElseThrow(() -> new RuntimeException("Identifiants incorrects"));
+    }
